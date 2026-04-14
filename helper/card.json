@@ -1,0 +1,262 @@
+[
+    {
+        "cardId": "AC",
+        "cardValue": 14,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "2C",
+        "cardValue": 2,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "3C",
+        "cardValue": 3,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "4C",
+        "cardValue": 4,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "5C",
+        "cardValue": 5,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "6C",
+        "cardValue": 6,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "7C",
+        "cardValue": 7,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "8C",
+        "cardValue": 8,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "9C",
+        "cardValue": 9,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "10C",
+        "cardValue": 10,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "JC",
+        "cardValue": 11,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "QC",
+        "cardValue": 12,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "KC",
+        "cardValue": 13,
+        "suit": "Clubs"
+    },
+    {
+        "cardId": "AD",
+        "cardValue": 14,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "2D",
+        "cardValue": 2,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "3D",
+        "cardValue": 3,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "4D",
+        "cardValue": 4,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "5D",
+        "cardValue": 5,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "6D",
+        "cardValue": 6,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "7D",
+        "cardValue": 7,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "8D",
+        "cardValue": 8,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "9D",
+        "cardValue": 9,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "10D",
+        "cardValue": 10,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "JD",
+        "cardValue": 11,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "QD",
+        "cardValue": 12,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "KD",
+        "cardValue": 13,
+        "suit": "Diamonds"
+    },
+    {
+        "cardId": "AH",
+        "cardValue": 14,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "2H",
+        "cardValue": 2,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "3H",
+        "cardValue": 3,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "4H",
+        "cardValue": 4,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "5H",
+        "cardValue": 5,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "6H",
+        "cardValue": 6,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "7H",
+        "cardValue": 7,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "8H",
+        "cardValue": 8,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "9H",
+        "cardValue": 9,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "10H",
+        "cardValue": 10,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "JH",
+        "cardValue": 11,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "QH",
+        "cardValue": 12,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "KH",
+        "cardValue": 13,
+        "suit": "Hearts"
+    },
+    {
+        "cardId": "AS",
+        "cardValue": 14,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "2S",
+        "cardValue": 2,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "3S",
+        "cardValue": 3,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "4S",
+        "cardValue": 4,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "5S",
+        "cardValue": 5,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "6S",
+        "cardValue": 6,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "7S",
+        "cardValue": 7,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "8S",
+        "cardValue": 8,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "9S",
+        "cardValue": 9,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "10S",
+        "cardValue": 10,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "JS",
+        "cardValue": 11,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "QS",
+        "cardValue": 12,
+        "suit": "Spades"
+    },
+    {
+        "cardId": "KS",
+        "cardValue": 13,
+        "suit": "Spades"
+    }
+]
