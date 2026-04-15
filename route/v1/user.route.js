@@ -15,6 +15,4 @@ router.post("/notify", userController.notify);
 
 
 
-
-
 module.exports = router;
