@@ -28,6 +28,9 @@ module.exports.socketController = (io) => {
 
         socket.on(socketEmit.sideShow, async (data) => gameplayController.sideShow(io, user, socketId, data));
 
+        socket.on(socketEmit.respondToSideShow, async (data) => gameplayController.respondToSideShow(io, user, socketId, data));
+
+
         // Dash call
         //socket.on(socketEmit.dashCall, async (data) => gameplayController.dashCall(io, user, socketId, data));
 

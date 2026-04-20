@@ -129,289 +129,152 @@ module.exports.sideShowTurnManager = (playersData, currentUser) => {
     return activePlayers[sideIndex];
 };
 
-// module.exports.antiClockWiseTurnManager = (players, currentUser, data, clockWise = false) => {
-//     const cardRound = data?.cardRound
-//     const allplayedCond = data?.allplayedCond
-//     const dashCall = data?.dashCall
-//     const estimation = data?.estimation
-
-//     var playersPlayed = players.map(x => {
-//         if (cardRound) return x.player
-//         else if (!x.turnPlayed && !x.estimation && !x.dashCall && !x.callBider && !x.pass) return x.player
-//     }).filter(Boolean)
-
-
-
-//     if (cardRound || dashCall) {
-//         const index = playersPlayed.findIndex(x => x.toString() === currentUser.toString());
-
-//         if (allplayedCond) {
-//             return { player: null, playersLeft: 0 }
-//         }
-//         else if (playersPlayed[index + 1]) {
-//             let turnUser = players.find(e => e.player.toString() == playersPlayed[index + 1].toString())
-//             return { player: playersPlayed[index + 1], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-//         }
-//         else {
-//             let turnUser = players.find(e => e.player.toString() == playersPlayed[0].toString())
-//             return { player: playersPlayed[0], playersLeft: playersPlayed.length - 1, isBoat: turnUser?.isBoat || false }
-//         }
-//     }
-
-
-//     var playersPlayed = players.map(x => {
-//         if (cardRound) return x.player
-//         else if (!x.turnPlayed && !x.estimation && !x.dashCall && !x.callBider && !x.pass && String(x.player) != String(currentUser)) return x.player
-//     }).filter(Boolean)
-
-
-//     const index = playersPlayed.findIndex(x => x.toString() === currentUser.toString());
-
-//     if (clockWise) {
-//         if (playersPlayed[index - 1]) {
-//             let turnUser = players.find(e => e.player.toString() == playersPlayed[index - 1].toString())
-//             return { player: playersPlayed[index - 1], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-//         }
-//         else {
-//             let turnUser = players.find(e => e.player.toString() == playersPlayed[playersPlayed.length - 1])
-//             return { player: playersPlayed[playersPlayed.length - 1], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-//         }
-//     }
-
-//     if (playersPlayed[index + 1]) {
-//         let turnUser = players.find(e => e.player.toString() == playersPlayed[index + 1].toString())
-//         return { player: playersPlayed[index + 1], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-//     }
-//     else {
-//         let turnUser = players.find(e => e.player.toString() == playersPlayed[0])
-//         return { player: playersPlayed[0], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-//     }
-
-
-// }
-
-
-module.exports.colorRoundTurnManager = (players, currentUser, data) => {
-
-    if (data.allplayedCond) {
-        return { player: null, playersLeft: 0 }
-    }
-    var playersPlayed = players.map(x => {
-        if (!x.estimation) return x.player
-    }).filter(Boolean)
-
-
-    const index = playersPlayed.findIndex(x => x.toString() === currentUser.toString());
-    if (playersPlayed[index + 1]) {
-        return { player: playersPlayed[index + 1], playersLeft: playersPlayed.length - 1 }
-    }
-    else {
-        return { player: playersPlayed[0], playersLeft: playersPlayed.length - 1 }
-    }
-
-
-}
-
-module.exports.trickFinder = (playersData, firstUser) => {
-    const callBider = playersData.find(x => x.callBider)
-    const trumpSuit = playersData.find(x => x.callBider).trumpSuit
-    firstUser = firstUser ? firstUser.toString() : firstUser
-    let startingUser = playersData.find(x => (x.player).toString() == firstUser) || callBider
-
-    const callBiderSuit = callBider?.lastCardPlayed.cardId[callBider?.lastCardPlayed?.cardId?.length - 1]
-    const playerWithValue = playersData.map(card => {
-        if (trumpSuit == this.getSuitFromCard(card)) return { user: card.player, value: card.lastCardPlayed.cardValue, wins: card.wins + 1, estimationNumber: card?.estimationNumber || 0, type: 'sameTrumpSuit' }
-        else if (this.getSuitFromCard(card) == this.getSuitFromCard(startingUser)) return { user: card.player, value: card.lastCardPlayed.cardValue, wins: card.wins + 1, estimationNumber: card?.estimationNumber || 0, type: "sameCallerSuit" }
-        else return { user: card.player, value: 0, wins: card.wins + 1, estimationNumber: card?.estimationNumber || 0, type: "other" }
-    })
-
-    let sameCallerCond = playerWithValue.filter(e => e.type == "sameCallerSuit")
-    let sameTrumpCond = playerWithValue.filter(e => e.type == "sameTrumpSuit")
-
-
-    let maxUser = null
-    if (sameTrumpCond.length > 0) {
-        maxUser = sameTrumpCond.reduce((max, entry) => entry.value > max.value ? entry : max, sameTrumpCond[0]);
-    }
-    else if (sameCallerCond.length > 0) {
-        maxUser = sameCallerCond.reduce((max, entry) => entry.value > max.value ? entry : max, sameCallerCond[0]);
-    }
-    else {
-        maxUser = { user: startingUser.player, value: startingUser.lastCardPlayed.cardValue, wins: startingUser.wins + 1, estimationNumber: startingUser?.estimationNumber || 0 }
-        //playerWithValue.reduce((max, entry) => entry.value > max.value ? entry : max, playerWithValue[0]);
-    }
-
-    // const maxUser = playerWithValue.reduce((max, entry) => entry.value > max.value ? entry : max, playerWithValue[0]);
-
-    // console.log('maxUser', maxUser)
-
-    return { ...maxUser, callBider }
-}
-
-
-module.exports.getSuitFromCard = (card, key = false) => {
-    console.log('card1111', card?.lastCardPlayed)
-    let cardData = null
-    if (key) {
-        cardData = card[card.length - 1]
-    }
-    else {
-        cardData = card?.lastCardPlayed?.cardId[card?.lastCardPlayed.cardId?.length - 1]
-    }
-    switch (cardData) {
-        case "S":
-            return suits.spade
-            break;
-
-        case "D":
-            return suits.diamond
-            break;
-
-        case "H":
-            return suits.heart
-            break;
-
-        case "C":
-            return suits.clubs
-            break;
-
-        default:
-            return suits.clubs
-            break;
-    }
-
-}
 
 
 module.exports.generateFiveDigitNumber = () => {
     return Math.floor(10000 + Math.random() * 90000).toString()
 }
 
-
-module.exports.getCoinsFromPlayerIndex = (resultArray, playerId, coins, diamondTable = false) => {
-    let index = resultArray.findIndex(x => x.player.toString() == playerId.toString())
-
-    switch (index) {
-        case 0:
-            coins = diamondTable ? 3 : coins / 2
-            break;
-        case 1:
-            coins = diamondTable ? 1 : (37.5 / 100) * coins
-            break;
-        case 2:
-            coins = diamondTable ? 0 : coins / 8
-            break;
-
-        case 3:
-            coins = 0
-            break;
-
-        default:
-            coins = 0
-            break;
-    }
-
-    return coins
-
-
+const RANKS = {
+    TRAIL: 6, PURE_SEQUENCE: 5, SEQUENCE: 4, COLOR: 3, PAIR: 2, HIGH_CARD: 1
 }
 
+const evaluateHand = (cards) => {
+    // sort descending
+    const values = cards.map(c => c.cardValue).sort((a, b) => b - a)
+    const suits = cards.map(c => c.suit)
 
-const getMaxValueKeys = (obj) => {
-    const maxValue = Math.max(...Object.values(obj));
-    return Object.keys(obj).filter(key => obj[key] === maxValue);
-};
+    const isSameSuit = suits.every(s => s === suits[0])
 
+    // handle A-2-3 special case
+    const isSequence =
+        (values[0] - 1 === values[1] && values[1] - 1 === values[2]) ||
+        (values.toString() === "14,3,2") // A-3-2
 
-module.exports.getBidNumberForBot = (cards, previousNumber = 4, firstTurn) => {
-    let number = cards.filter(e => e?.cardValue == 14 || e?.cardValue == 13 || e?.cardValue == 12).length
+    const counts = {}
+    values.forEach(v => counts[v] = (counts[v] || 0) + 1)
 
-    let cardsObject = cards.reduce((acc, cv, ci, arr) => {
-        let cardSuit = this.getSuitFromCard(cv.cardId, true)
-        if (acc[cardSuit]) acc[cardSuit] = acc[cardSuit] + 1
-        else acc[cardSuit] = 1
-        return acc
-    }, {})
+    const countValues = Object.values(counts)
 
-    let trumpSuit = getMaxValueKeys(cardsObject)[0]
-
-    if (number <= previousNumber && !firstTurn) {
+    // 🔥 TRAIL
+    if (countValues.includes(3)) {
         return {
-            isPass: true,
-            number: previousNumber,
-            trumpSuit
+            rank: RANKS.TRAIL,
+            name: "Trail",
+            high: values[0]
         }
     }
-    if (number >= 4) {
+
+    // 🔥 PURE SEQUENCE
+    if (isSequence && isSameSuit) {
         return {
-            isPass: false,
-            number,
-            trumpSuit
+            rank: RANKS.PURE_SEQUENCE,
+            name: "Pure Sequence",
+            high: values[0]
         }
     }
-    else {
+
+    // 🔥 SEQUENCE
+    if (isSequence) {
         return {
-            isPass: true,
-            number: 4,
-            trumpSuit
+            rank: RANKS.SEQUENCE,
+            name: "Sequence",
+            high: values[0]
         }
     }
+
+    // 🔥 COLOR
+    if (isSameSuit) {
+        return {
+            rank: RANKS.COLOR,
+            name: "Color",
+            high: values
+        }
+    }
+
+    // 🔥 PAIR
+    if (countValues.includes(2)) {
+        const pairValue = Number(Object.keys(counts).find(k => counts[k] === 2))
+        const kicker = Number(Object.keys(counts).find(k => counts[k] === 1))
+
+        return {
+            rank: RANKS.PAIR,
+            name: "Pair",
+            pairValue,
+            kicker
+        }
+    }
+
+    // 🔥 HIGH CARD
+    return {
+        rank: RANKS.HIGH_CARD,
+        name: "High Card",
+        high: values
+    }
 }
 
+const compareHands = (p1, p2) => {
+
+    // 1️⃣ Compare rank
+    if (p1.rank > p2.rank) return 1
+    if (p1.rank < p2.rank) return -1
+
+    // 2️⃣ Same type → compare details
+
+    // TRAIL
+    if (p1.rank === 6) return p1.high - p2.high
+
+    // PURE SEQUENCE / SEQUENCE
+    if (p1.rank === 5 || p1.rank === 4) return p1.high - p2.high
+
+    // COLOR / HIGH CARD
+    if (p1.rank === 3 || p1.rank === 1) {
+        for (let i = 0; i < 3; i++) {
+            if (p1.high[i] !== p2.high[i]) return p1.high[i] - p2.high[i]
+        }
+        return 0
+    }
+
+    // PAIR
+    if (p1.rank === 2) {
+        if (p1.pairValue !== p2.pairValue)
+            return p1.pairValue - p2.pairValue
+
+        return p1.kicker - p2.kicker
+    }
 
 
-module.exports.getEstimationNumberForBot = (cards) => {
-    let number = cards.filter(e => e?.cardValue == 14 || e?.cardValue == 13 || e?.cardValue == 12).length
-    return number
+    return 0
 }
 
+module.exports.compareResult = (p1, p2) => {
 
-module.exports.getScoreMultiplier = async (roomId, matchId) => {
-    let totalMatches = await matchSchema.model.find({ room: roomId, _id: { $ne: matchId } }).sort({ createdAt: -1 })
-        .limit(3)
-        .lean()
+    const p1Card = p1?.cards
+    const p2Card = p2?.cards
 
-    let scoreMultiplier = 1
-    if (totalMatches.length >= 2) {
-        if (totalMatches[0]?.matchResult == "syedaha" && totalMatches[1]?.matchResult == "syedaha") scoreMultiplier = 4
-        else if (totalMatches[0]?.matchResult == "syedaha") scoreMultiplier = 2
+    const p1Eval = evaluateHand(p1Card)
+    const p2Eval = evaluateHand(p2Card)
+    const result = compareHands(p1Eval, p2Eval)
 
+    let winner = null
+
+    if (result > 0) winner = p1?.playerId
+    else if (result < 0) winner = p2?.playerId
+    else winner = "DRAW"
+
+    return {
+        winner,
+        player1: {
+            cards: p1Card,
+            hand: p1Eval.name,
+            playerId: p1?.playerId
+        },
+        player2: {
+            cards: p2Card,
+            hand: p2Eval.name,
+            playerId: p2?.playerId
+
+        }
     }
-    else if (totalMatches[0]?.matchResult == "syedaha") {
-        scoreMultiplier = 2
-    }
-
-    return scoreMultiplier
-
-}
-
-module.exports.clockWiseTurnManager = (players, currentUser, data) => {
-    const cardRound = data?.cardRound
-    const allplayedCond = data?.allplayedCond
-    const dashCall = data?.dashCall
-    const estimation = data?.estimation
-
-    var playersPlayed = players.map(x => {
-        if (cardRound) return x.player
-        else if (!x.turnPlayed && !x.estimation && !x.dashCall && !x.callBider && !x.pass) return x.player
-    }).filter(Boolean)
-
-    var playersPlayed = players.map(x => {
-        if (cardRound) return x.player
-        else if (!x.turnPlayed && !x.estimation && !x.dashCall && !x.callBider && !x.pass && String(x.player) != String(currentUser)) return x.player
-    }).filter(Boolean)
-
-
-    const index = playersPlayed.findIndex(x => x.toString() === currentUser.toString());
-
-    if (playersPlayed[index - 1]) {
-        let turnUser = players.find(e => e.player.toString() == playersPlayed[index + 1].toString())
-        return { player: playersPlayed[index - 1], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-    }
-    else {
-        let turnUser = players.find(e => e.player.toString() == playersPlayed[3])
-        return { player: playersPlayed[0], isBoat: turnUser?.isBoat || false, playersLeft: playersPlayed.length - 1 }
-    }
-
 
 }

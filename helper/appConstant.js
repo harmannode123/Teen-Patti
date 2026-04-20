@@ -52,6 +52,7 @@ module.exports.socketEmit = {
     rejectSideShow: "rejectSideShow",
     acceptSideShow: "acceptSideShow",
     sideShowWinner: "sideShowWinner",
+    "respondToSideShow": "respondToSideShow",
 
 }
 

@@ -5,13 +5,10 @@ const mongoose = require("mongoose");
 const roomSchema = require("../../model/room.model");
 const userSchema = require("../../model/user.model");
 const matchSchema = require("../../model/match.model");
-const pendingMatchSchema = require("../../model/pendingmatch.model")
 const economySchema = require("../../model/economy.mode.")
 const cardDeck = require("../../helper/card.json");
-const { messagesArabic, messagesEnglish, RoundTrumpSuit, tableTypes, diamondTable, tableTypeForDiamond } = require("../../helper/appConstant");
-const { turnManager, trickFinder, getSuitFromCard,
-    colorRoundTurnManager, parseMongoObjectId, getCoinsFromPlayerIndex, getBidNumberForBot,
-    getEstimationNumberForBot, getScoreMultiplier, clockWiseTurnManager, sideShowTurnManager } = require("../../helper/utils");
+const { messagesArabic, messagesEnglish } = require("../../helper/appConstant");
+const { turnManager, sideShowTurnManager, evaluateHand, compareHands, compareResult } = require("../../helper/utils");
 const moment = require('moment')
 const { sendFcmNotification } = require('../../helper/firebase.notification');
 const notificationSchema = require('../../model/notification.model');
@@ -25,20 +22,13 @@ const RANKS = {
     TRAIL: 6, PURE_SEQUENCE: 5, SEQUENCE: 4, COLOR: 3, PAIR: 2, HIGH_CARD: 1
 }
 
-// move timer
-// module.exports.turnTimer = async (io, user, socketId, data) => {
-//     let { matchId, turnTimer, dashCall = false } = data;
-//     global.turnTimers[matchId] = setTimeout(async () => {
-//         if (dashCall) this.dashCall(io, user, socketId, { ...data, dashCall: false });
-//     }, parseInt(turnTimer) * 1000);
-// };
-
 function shuffle(deck) {
-    for (let i = deck.length - 1; i > 0; i--) {
+    const copy = [...deck];
+    for (let i = copy.length - 1; i > 0; i--) {
         let j = Math.floor(Math.random() * (i + 1));
-        [deck[i], deck[j]] = [deck[j], deck[i]];
+        [copy[i], copy[j]] = [copy[j], copy[i]];
     }
-    return deck;
+    return copy;
 }
 
 
@@ -139,7 +129,7 @@ module.exports.startMatch = async (io, matchData) => {
     const currentPlayerTurn = playersData[0]?.playerId
 
     setTimeout(async () => {
-        console.log(":::: CArd Distribution:: :::: ");
+        console.log(":::: CArd Distribution:: :::: ", playersData);
 
         startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, }, { playersData, pot: bootAmount, turn: currentPlayerTurn, currentBetAmount }, { new: true }).populate('players', 'name socketId coins')
 
@@ -172,16 +162,20 @@ module.exports.sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
 
     const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(currentPlayerTurnId)));
 
+    const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
+
+    showEnable = totalActivePlayers.length == 2 ? true : false
 
     matchData.players.forEach((player) => {
-        io.to(player.socketId).emit(socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 10, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot });
+        io.to(player.socketId).emit(socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 10, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
     });
 
     global.turnTimers[String(matchData?._id)] = setTimeout(async () => {
 
         this.placeBet(io, currentPlayerTurnId, null, {
             isPacked: true,
-            amount: 0,
+            amount: 10,
+            // isRaisebet: true
         });
 
     }, 30000);
@@ -193,6 +187,9 @@ module.exports.sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
 module.exports.placeBet = async (io, user, socketId, data) => {
     try {
 
+        let { amount, isPacked, isRaisebet } = data;
+
+
         let userId = socketId ? user?._id : user
         const check = socketId ? { _id: user?._id, socketId } : { _id: user }
 
@@ -201,25 +198,39 @@ module.exports.placeBet = async (io, user, socketId, data) => {
 
         let [userData, matchData] = await Promise.all([
             userSchema.model.findOne({ ...check }),
-            matchSchema.model.findOne({ start: true, end: false, turn: userId }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
+            matchSchema.model.findOne({ start: true, end: false, turn: userId, }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
         ])
 
 
+
         if (!matchData || !userData) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Not your turn." });
-        if (data?.amount && data?.amount != matchData?.currentBetAmount) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Invalid bet amount." });
+        // else if (amount && amount != matchData?.currentBetAmount) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Invalid bet amount." });
+
+        let currentBet = matchData?.currentBetAmount
+        //ADD VALIDATION FOR RAISE BET
+        amount = isRaisebet ? Number(currentBet) * 2 : Number(currentBet)
 
         let nextPlayerTurnId = turnManager(matchData?.playersData, userId,)
 
         if (!nextPlayerTurnId) return;
 
-        let updatePot = Number(data?.amount) || 0
-        let isPacked = data?.isPacked || false
+        let updatePot = amount
+        isPacked = isPacked || false
 
         matchData.playersData.map((x) => {
             if (String(x?.playerId) == String(userId)) {
 
                 if (isPacked) { x.isPacked = isPacked }
-                else { x.totalBet += updatePot }
+                else if (x?.isSeen) {
+                    x.totalBet += updatePot
+                }
+                else if (matchData?.raise) {
+                    x.totalBet += (updatePot / 2)
+                }
+                else {
+                    x.totalBet += updatePot
+                }
+
                 x.turn = false
             }
             else if (String(x?.playerId) == String(nextPlayerTurnId)) {
@@ -230,18 +241,19 @@ module.exports.placeBet = async (io, user, socketId, data) => {
         clearInterval(global.turnTimers[String(matchData?._id)]);
         matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, {
             turn: nextPlayerTurnId, playersData: matchData?.playersData, $inc: { pot: updatePot },
-            ...(isPacked ? { $addToSet: { exitPlayers: userId } } : {}),
+            currentBetAmount: amount,
+            // ...(disconnect ? { $addToSet: { exitPlayers: userId } } : {}),
             ...(matchData?.sideShow ? { sideShow: false } : {}),
+            ...(!matchData?.raise && isRaisebet ? { raise: true } : {}),
+
         }, { new: true }).populate('players', 'name socketId coins').lean()
 
 
         const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(userId)));
 
         matchData.players.forEach((player) => {
-            io.to(player.socketId).emit(socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked });
+            io.to(player.socketId).emit(socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount });
         });
-
-
 
         if (turnManager(matchData?.playersData, nextPlayerTurnId)) {
 
@@ -254,7 +266,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
             });
 
             await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
-            //  this.startNextRound(io, matchData)
+            this.startNextRound(io, matchData)
         }
 
     } catch (error) {
@@ -263,7 +275,6 @@ module.exports.placeBet = async (io, user, socketId, data) => {
     }
 
 }
-
 
 module.exports.seenCard = async (io, user, socketId, data) => {
     try {
@@ -324,10 +335,10 @@ module.exports.seenCard = async (io, user, socketId, data) => {
 
 module.exports.sideShow = async (io, user, socketId, data = {}) => {
     try {
-        console.log(":::::::;data :::", data)
+        console.log(":::::::;sideShow :::", data)
 
-        const { show } = data
-        console.log(":::::::;data :::", data)
+        // const { show } = data
+        console.log(":::::::;sideShow :::", data)
 
 
         let userId = user?._id
@@ -345,6 +356,10 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
 
         const otherPlayer = sideShowTurnManager(matchData?.playersData, userId)
 
+        const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
+        if (totalActivePlayers?.length < 2) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Show not possible right now." });
+
+        const show = totalActivePlayers?.length == 2 ? true : false
 
         if (!show) {
 
@@ -362,16 +377,21 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
         }
         else if (show) {
             //for final show
-            const totalPlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
-            if (totalPlayers?.length != 2) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Show not possible right now." });
+            // const totalPlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
+            // if (totalPlayers?.length != 2) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Show not possible right now." });
 
-            const { player1, player2, winner } = compareResult(totalPlayers[0], totalPlayers[1])
+            const { player1, player2, winner } = compareResult(totalActivePlayers[0], totalActivePlayers[1])
 
             matchData.players.forEach((player) => {
                 io.to(player?.socketId).emit(socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
             });
 
+
             clearInterval(global.turnTimers[String(matchData?._id)]);
+            await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, { winner: winner, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
+
+            this.startNextRound(io, matchData)
+
 
 
         }
@@ -392,13 +412,19 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
         let userId = user?._id
 
+        console.log("::::::::::::::::::! accept ", data)
+
         let matchData = await matchSchema.model.findOneAndUpdate({ start: true, end: false, sideShow: true, sideShowUser: userId }, { sideShow: false, sideShowUser: null }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
         if (!matchData) return;
+        console.log("::::::::::::::::::2222 accept ", data)
+
 
         const totalPlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
         if (totalPlayers?.length < 3) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "side Show not possible right now." });
 
         clearInterval(global.turnTimers[String(matchData?._id)]);
+
+        console.log("::::::::::::::::::!333333333333 accept ")
 
         let otherPlayerId = matchData?.turn
         if (accept) {
@@ -411,8 +437,10 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
             matchData.players.forEach((player) => {
 
-                if (p1Np2Id.includes(String(player?._id))) io.to(player?.socketId).emit(socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
-                else io.to(player?.socketId).emit(socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
+                // if (p1Np2Id.includes(String(player?._id))) io.to(player?.socketId).emit(socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
+                // else io.to(player?.socketId).emit(socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
+                io.to(player?.socketId).emit(socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: winner });
+
             });
 
             const looserId = String(userId) == String(winner) ? otherPlayerId : userId
@@ -445,10 +473,19 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
 module.exports.startNextRound = async (io, matchData) => {
     try {
-        let players = matchData.players.map(x => x?._id)
+        let exitPlayers = matchData.exitPlayers?.map(x => String(x))
+        let players = matchData.players.filter(x => {
+            if (x?._id && !exitPlayers.includes(String(x?._id))) return x?._id
+        })
+
+        if (players.length < 3) return;
         let newMatch = await matchSchema.model.create({ players })
         newMatch = newMatch.toObject()
-        this.startMatch(io, newMatch)
+
+        setTimeout(() => {
+            this.startMatch(io, newMatch)
+
+        }, 5000);
 
     } catch (error) {
         console.log(error);
@@ -460,149 +497,16 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
     console.log(":::: Self Exit :::: ");
 
     if (disconnect) {
-        await userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null })
+
+        await Promise.all([
+            userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null }),
+            matchSchema.model.findOneAndUpdate({ players: user?._id, start: true, end: false }, { $addToSet: { exitPlayers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
+        ])
         return;
     }
 
 };
 
-
-const evaluateHand = (cards) => {
-    // sort descending
-    const values = cards.map(c => c.cardValue).sort((a, b) => b - a)
-    const suits = cards.map(c => c.suit)
-
-    const isSameSuit = suits.every(s => s === suits[0])
-
-    // handle A-2-3 special case
-    const isSequence =
-        (values[0] - 1 === values[1] && values[1] - 1 === values[2]) ||
-        (values.toString() === "14,3,2") // A-3-2
-
-    const counts = {}
-    values.forEach(v => counts[v] = (counts[v] || 0) + 1)
-
-    const countValues = Object.values(counts)
-
-    // 🔥 TRAIL
-    if (countValues.includes(3)) {
-        return {
-            rank: RANKS.TRAIL,
-            name: "Trail",
-            high: values[0]
-        }
-    }
-
-    // 🔥 PURE SEQUENCE
-    if (isSequence && isSameSuit) {
-        return {
-            rank: RANKS.PURE_SEQUENCE,
-            name: "Pure Sequence",
-            high: values[0]
-        }
-    }
-
-    // 🔥 SEQUENCE
-    if (isSequence) {
-        return {
-            rank: RANKS.SEQUENCE,
-            name: "Sequence",
-            high: values[0]
-        }
-    }
-
-    // 🔥 COLOR
-    if (isSameSuit) {
-        return {
-            rank: RANKS.COLOR,
-            name: "Color",
-            high: values
-        }
-    }
-
-    // 🔥 PAIR
-    if (countValues.includes(2)) {
-        const pairValue = Number(Object.keys(counts).find(k => counts[k] === 2))
-        const kicker = Number(Object.keys(counts).find(k => counts[k] === 1))
-
-        return {
-            rank: RANKS.PAIR,
-            name: "Pair",
-            pairValue,
-            kicker
-        }
-    }
-
-    // 🔥 HIGH CARD
-    return {
-        rank: RANKS.HIGH_CARD,
-        name: "High Card",
-        high: values
-    }
-}
-
-const compareHands = (p1, p2) => {
-
-    // 1️⃣ Compare rank
-    if (p1.rank > p2.rank) return 1
-    if (p1.rank < p2.rank) return -1
-
-    // 2️⃣ Same type → compare details
-
-    // TRAIL
-    if (p1.rank === 6) return p1.high - p2.high
-
-    // PURE SEQUENCE / SEQUENCE
-    if (p1.rank === 5 || p1.rank === 4) return p1.high - p2.high
-
-    // COLOR / HIGH CARD
-    if (p1.rank === 3 || p1.rank === 1) {
-        for (let i = 0; i < 3; i++) {
-            if (p1.high[i] !== p2.high[i]) return p1.high[i] - p2.high[i]
-        }
-        return 0
-    }
-
-    // PAIR
-    if (p1.rank === 2) {
-        if (p1.pairValue !== p2.pairValue)
-            return p1.pairValue - p2.pairValue
-
-        return p1.kicker - p2.kicker
-    }
-
-
-    return 0
-}
-
-const compareResult = (p1, p2) => {
-
-    const p1Card = p1?.cards
-    const p2Card = p2?.cards
-
-    const p1Eval = evaluateHand(p1Card)
-    const p2Eval = evaluateHand(p2Card)
-    const result = compareHands(p1Eval, p2Eval)
-
-    let winner = null
-
-    if (result > 0) winner = p1?.playerId
-    else if (result < 0) winner = p2?.playerId
-    else winner = "DRAW"
-
-    return {
-        winner,
-        player1: {
-            cards: p1Card,
-            hand: p1Eval.name
-        },
-        player2: {
-            cards: p2Card,
-            hand: p2Eval.name
-        }
-    }
-
-}
 
 
 

@@ -26,7 +26,12 @@ const playerDataSchema = mongoose.Schema({
     isPacked: {
         type: Boolean,
         default: false
-    }
+    },
+    raise: {
+        type: Boolean,
+        default: false
+    },
+
 }, {
     timestamps: true
 });
@@ -94,6 +99,10 @@ const matchSchema = mongoose.Schema({
     record: {
         type: Array,
         default: []
+    },
+    sideShowUser: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "user",
     },
     round: {
         type: Number,
