@@ -8,7 +8,7 @@ const matchSchema = require("../../model/match.model");
 const economySchema = require("../../model/economy.mode.")
 const cardDeck = require("../../helper/card.json");
 const { messagesArabic, messagesEnglish } = require("../../helper/appConstant");
-const { turnManager, sideShowTurnManager, evaluateHand, compareHands, compareResult, parseMongoObjectId, checkIndex } = require("../../helper/utils");
+const { turnManager, sideShowTurnManager, evaluateHand, compareHands, compareResult, parseMongoObjectId } = require("../../helper/utils");
 const moment = require('moment')
 const { sendFcmNotification } = require('../../helper/firebase.notification');
 const notificationSchema = require('../../model/notification.model');
@@ -18,6 +18,9 @@ global.roomTimeouts = {};
 global.dashCallTimeouts = {};
 global.turnTimers = {};
 
+const RANKS = {
+    TRAIL: 6, PURE_SEQUENCE: 5, SEQUENCE: 4, COLOR: 3, PAIR: 2, HIGH_CARD: 1
+}
 
 function shuffle(deck) {
     const copy = [...deck];
@@ -28,22 +31,63 @@ function shuffle(deck) {
     return copy;
 }
 
-const sortPlayerAccSeat = (matchData) => {
 
+
+
+module.exports.joinRoom = async (io, user, socketId, data = {}) => {
     try {
+        let { } = data;
 
-        let data = matchData.players.map(player => {
-            return {
-                ...player.toObject(),
-                index: checkIndex(matchData, player?._id)
-            };
-        });
+        console.log("::::::::::::::::::::Join Room::::::::", user?.name)
 
-        data.sort((a, b) => a.index - b.index); // ascending order
+        let [userData, alreadyInMatch] = await Promise.all([
+            userSchema.model.findOne({ _id: user?._id, socketId }),
+            matchSchema.model.findOne({ players: user?._id, end: false }).lean(),
+        ])
 
-        return data;
+        // We will open this comment later 
+        //if (alreadyInMatch || !userData) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: alreadyInMatch ? `You are already in match.` : "Invalid socketId." })
+
+        if (userData?.coins < gameConfig?.bootAmount || !userData?.coins) {
+            return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: `Insuffictient coins for this game.` })
+        }
+
+        const [currentMatch] = await Promise.all([
+            await matchSchema.model.findOneAndUpdate({ $expr: { $lt: [{ $size: "$players" }, gameConfig?.maxPlayer] }, start: false }, { $addToSet: { players: userData?._id } }, { new: true }).populate('players', '_id name socketId coins').lean()
+        ])
+
+        if (currentMatch) {
+            currentMatch?.players.map((x) => {
+                io.to(x?.socketId).emit(socketEmit.joinRoomSuccess, { ...currentMatch, selfId: x?._id })
+            })
+            // this.startMatch(io, currentMatch)
+        }
+        else {
+
+            let [newMatch] = await Promise.all([
+                matchSchema.model.create({ players: [userData?._id] })
+            ])
+
+            let players = [{
+                _id: userData?._id,
+                name: userData?.name,
+                socketId: userData?.socketId
+            }]
+
+            io.to(socketId).emit(socketEmit.joinRoomSuccess, { _id: newMatch?._id, players, selfId: userData?._id })
+
+            setTimeout(async () => {
+                const checkMatch = await matchSchema.model.findOne({ _id: newMatch?._id, start: false }).populate('players', '_id name socketId coins').lean()
+
+                if (checkMatch?.players.length < gameConfig?.minPlayer) await matchSchema.model.deleteOne({ _id: checkMatch?._id })
+                else this.startMatch(io, checkMatch)
+
+            }, gameConfig.gameStartAfterCreate)
+
+        }
     } catch (error) {
-        throw new Error(error)
+        console.log(error);
+        return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
     }
 };
 
@@ -51,96 +95,90 @@ const sortPlayerAccSeat = (matchData) => {
 module.exports.startMatch = async (io, matchData) => {
     console.log(":::: :::::::::::::::::::::::  startMatch :::::::::::::::::::::::::::::: ");
 
-    try {
-        let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins')
+    let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins')
 
-        if (!startMatch) return;
+    if (!startMatch) return;
 
-        const updateEconomy = []
-        let bootAmount = 0
-        let currentBetAmount = gameConfig?.bootAmount
+    const updateEconomy = []
+    let bootAmount = 0
+    let currentBetAmount = gameConfig?.bootAmount
 
-        startMatch.players.map((x) => {
-            io.to(x?.socketId).emit(socketEmit.matchStart, { ...matchData })
-            updateEconomy.push({ user: x?._id, matchId: startMatch?._id, betAmount: gameConfig?.bootAmount });
-            bootAmount = bootAmount + gameConfig?.bootAmount
+    startMatch.players.map((x) => {
+        io.to(x?.socketId).emit(socketEmit.matchStart, { ...matchData })
+        updateEconomy.push({ user: x?._id, matchId: startMatch?._id, betAmount: gameConfig?.bootAmount });
+        bootAmount = bootAmount + gameConfig?.bootAmount
+    })
+
+    //----------Update Economy-------
+
+    await Promise.all([
+        economySchema.model.insertMany(updateEconomy),
+        userSchema.model.updateMany({ $expr: { $in: ["$_id", startMatch?.players?.map(x => x?._id)] } }, { $inc: { coins: - (gameConfig?.bootAmount) } })
+    ])
+
+
+    //Distribute Card
+    const cards = shuffle(cardDeck)
+
+    const playersData = []
+
+    startMatch.players.map((x) => {
+        playersData.push({ playerId: x?._id, cards: cards.splice(-3), turn: !playersData[0] ? true : false, })
+    })
+
+    const currentPlayerTurn = playersData[0]?.playerId
+
+    setTimeout(async () => {
+        console.log(":::: CArd Distribution:: :::: ", playersData);
+
+        startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, }, { playersData, pot: bootAmount, turn: currentPlayerTurn, currentBetAmount }, { new: true }).populate('players', 'name socketId coins')
+
+        // 🎴 STEP 3: Send cards to each player (PRIVATE)
+        startMatch.players.forEach((player) => {
+            io.to(player.socketId).emit(socketEmit.cardDistributeSuccess, { message: "Card Distribuation success.", _id: startMatch?._id });
+        });
+
+        setTimeout(() => {
+            this.sendBetTurnEmit(io, currentPlayerTurn, startMatch)
+
+        }, 3000)
+
+    }, 5000)
+
+
+    setTimeout(async () => {
+        console.log(":::: End match :::: ");
+
+        const endMatch = await matchSchema.model.findOneAndUpdate({ _id: startMatch?._id, start: true, end: false }, { end: true }, { new: true }).populate('players', 'name socketId coins').lean()
+        endMatch?.players.map((x) => {
+            io.to(x?.socketId).emit(socketEmit.gameOver, { ...endMatch })
         })
-
-
-
-
-        //----------Update Economy-------
-
-        await Promise.all([
-            economySchema.model.insertMany(updateEconomy),
-            userSchema.model.updateMany({ $expr: { $in: ["$_id", startMatch?.players?.map(x => x?._id)] } }, { $inc: { coins: - (gameConfig?.bootAmount) } })
-        ])
-
-
-        //Distribute Card
-        const cards = shuffle(cardDeck)
-
-        let sortPlayer = sortPlayerAccSeat(startMatch)
-
-        const playersData = []
-
-        sortPlayer.map((x) => {
-            if (x?._id && x?.index >= 0) playersData.push({ playerId: x?._id, cards: cards.splice(-3), turn: !playersData[0] ? true : false, index: x?.index })
-        })
-
-        const currentPlayerTurn = playersData[0]?.playerId
-
-        setTimeout(async () => {
-            console.log(":::: CArd Distribution:: :::: ", playersData);
-
-            startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, }, { playersData, pot: bootAmount, turn: currentPlayerTurn, currentBetAmount }, { new: true }).populate('players', 'name socketId coins')
-
-            // 🎴 STEP 3: Send cards to each player (PRIVATE)
-            startMatch.players.forEach((player) => {
-                io.to(player.socketId).emit(socketEmit.cardDistributeSuccess, { message: "Card Distribuation success.", _id: startMatch?._id });
-            });
-
-            setTimeout(() => {
-                sendBetTurnEmit(io, currentPlayerTurn, startMatch)
-
-            }, 3000)
-
-        }, 5000)
-
-
-    } catch (error) {
-        console.log("::::::::::::::::::::::::::::::::::::::start match error::::::::::", error)
-    }
+    }, 120000)
 };
 
 
-const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
+module.exports.sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
 
 
-    try {
+    const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(currentPlayerTurnId)));
 
-        let index = checkIndex(matchData, currentPlayerTurnId)
+    const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
 
-        const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
+    showEnable = totalActivePlayers.length == 2 ? true : false
 
-        showEnable = totalActivePlayers.length == 2 ? true : false
+    matchData.players.forEach((player) => {
+        io.to(player.socketId).emit(socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 10, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
+    });
 
-        matchData.players.forEach((player) => {
-            io.to(player.socketId).emit(socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 10, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
+    global.turnTimers[String(matchData?._id)] = setTimeout(async () => {
+
+        this.placeBet(io, currentPlayerTurnId, null, {
+            isPacked: true,
+            amount: 10,
+            // isRaisebet: true
         });
 
-        global.turnTimers[String(matchData?._id)] = setTimeout(async () => {
-
-            this.placeBet(io, currentPlayerTurnId, null, {
-                isPacked: true,
-                amount: 0,
-                // isRaisebet: true
-            });
-
-        }, 30000);
-    } catch (error) {
-        throw new Error(error)
-    }
+    }, 30000);
 
 }
 
@@ -211,7 +249,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
         }, { new: true }).populate('players', 'name socketId coins').lean()
 
 
-        const index = checkIndex(matchData, userId)
+        const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(userId)));
 
         matchData.players.forEach((player) => {
             io.to(player.socketId).emit(socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount });
@@ -219,7 +257,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
 
         if (turnManager(matchData?.playersData, nextPlayerTurnId)) {
 
-            sendBetTurnEmit(io, nextPlayerTurnId, matchData)
+            this.sendBetTurnEmit(io, nextPlayerTurnId, matchData)
         }
         else {
 
@@ -227,7 +265,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
                 io.to(player.socketId).emit(socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId });
             });
 
-            matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
+            await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
             this.startNextRound(io, matchData)
         }
 
@@ -437,23 +475,15 @@ module.exports.startNextRound = async (io, matchData) => {
     try {
         let exitPlayers = matchData.exitPlayers?.map(x => String(x))
         let players = matchData.players.filter(x => {
-            if (x?._id && !exitPlayers.includes(String(x?._id))) return String(x?._id)
+            if (x?._id && !exitPlayers.includes(String(x?._id))) return x?._id
         })
 
-        let seatPosition = matchData.seatPosition.filter(x => {
-            if (x?.playerId && !exitPlayers.includes(String(x?.playerId)) && players.includes(String(x?.playerId))) return x
-        })
-
-        let [newMatch] = await Promise.all([
-            matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true })
-        ])
+        if (players.length < 3) return;
+        let newMatch = await matchSchema.model.create({ players })
         newMatch = newMatch.toObject()
 
-        setTimeout(async () => {
-
-            const updateMatch = await matchSchema.model.findOneAndUpdate({ _id: newMatch?._id }, { waitForNextRount: false }).lean()
-
-            if (updateMatch.players.length >= gameConfig?.minPlayer) this.startMatch(io, updateMatch)
+        setTimeout(() => {
+            this.startMatch(io, newMatch)
 
         }, 5000);
 
@@ -469,57 +499,15 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
 
     await Promise.all([
         userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null }),
-        matchSchema.model.updateMany({ players: user?._id, start: true, end: false }, {
-            $addToSet: { exitPlayers: user?._id },
-            //$pull: { players: user?._id, seatPosition: { playerId: user._id } }
-        }),
-        matchSchema.model.updateMany({ players: user?._id, start: false, end: false }, {
-            // $addToSet: { exitPlayers: user?._id },
-            $pull: { players: user?._id, seatPosition: { playerId: user._id } }
-        })
+        matchSchema.model.updateMany({ players: user?._id, end: false }, { $addToSet: { exitPlayers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
     ])
     return;
 
 };
 
 module.exports.roomList = async (io, user, socketId, data = {}) => {
-    try {
-
-        console.log(":::: roomList::::::::::::rommList :::: ");
-        const { limit = 20, offset = 0 } = data
-
-        const list = await matchSchema.model.aggregate([
-            {
-                $match: {
-                    end: false
-                }
-            },
-            {
-                $project: {
-                    totalActivePlayers: {
-                        $subtract: [
-                            { $size: { $ifNull: ["$players", []] } },
-                            { $size: { $ifNull: ["$exitPlayers", []] } }
-                        ]
-                    },
-                    roomId: 1,
-                    start: 1,
-                    end: 1
-                }
-            }
-        ])
-
-        return io.to(socketId).emit(socketEmit.fetchRoomList, { message: "Fetch Room List success", list });
-    } catch (error) {
-        return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
-    }
-
-};
-
-
-module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
     console.log(":::: roomList::::::::::::rommList :::: ");
-    const { } = data
+    const { limit = 20, offset = 0 } = data
 
     const list = await matchSchema.model.aggregate([
         {
@@ -542,80 +530,106 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
         }
     ])
 
-    return io.to(socketId).emit(socketEmit.fetchLobbyList, { message: "Fetch Room List success", list });
+    return io.to(socketId).emit(socketEmit.fetchRoomList, { message: "Fetch Room List success", list });
+
+};
+
+
+module.exports.roomList = async (io, user, socketId, data = {}) => {
+    console.log(":::: roomList::::::::::::rommList :::: ");
+    const { limit = 20, offset = 0 } = data
+
+    const list = await matchSchema.model.aggregate([
+        {
+            $match: {
+                end: false
+            }
+        },
+        {
+            $project: {
+                totalActivePlayers: {
+                    $subtract: [
+                        { $size: { $ifNull: ["$players", []] } },
+                        { $size: { $ifNull: ["$exitPlayers", []] } }
+                    ]
+                },
+                roomId: 1,
+                start: 1,
+                end: 1
+            }
+        }
+    ])
+
+    return io.to(socketId).emit(socketEmit.fetchRoomList, { message: "Fetch Room List success", list });
 
 };
 
 
 module.exports.watchRoom = async (io, user, socketId, data = {}) => {
     console.log(":::: roomList::::::::::::rommList :::: ");
-    try {
+    const { roomId } = data
 
-        const { roomId } = data
+    if (!roomId) return;
 
-        if (!roomId) return;
+    const matchData = await matchSchema.model.findOneAndUpdate({ roomId }, { $addToSet: { watchers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
 
-        const matchData = await matchSchema.model.findOneAndUpdate({ roomId }, { $addToSet: { watchers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
-
-        matchData.players.forEach((player) => {
-            player['index'] = checkIndex(matchData, player?._id)
-        })
-
-        const payload = {
-            _id: matchData?._id,
-            turn: matchData?.turn,
-            players: matchData?.players,
-            timer: 10,
-        }
-
-
-        io.to(socketId).emit(socketEmit.watchRoom, { message: "Fetch Room List success", ...payload });
-    } catch (error) {
-        return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
-
-    }
+    return io.to(socketId).emit(socketEmit.watchRoom, { message: "Fetch Room List success", data: matchData });
 };
 
 
 module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
     try {
-        let { roomId, index = -1 } = data;
+        let { matchId, index = -1 } = data;
 
         console.log("::::::::::::::::::::Join Room::::::::", user?.name);
 
-        if (!roomId || index < 0) return;
+        if (!matchId || index < 0) return;
 
         let [userData, matchData] = await Promise.all([
             userSchema.model.findOne({ _id: user?._id, socketId }),
-            matchSchema.model.findOneAndUpdate({
-                roomId,
-                players: { $ne: user?._id },
-                end: false,
-                seatPosition: {
-                    $not: {
-                        $elemMatch: { index: index }
-                    }
-                }
-            },
+            matchSchema.model.findOneAndUpdate(
                 {
-                    $addToSet: { players: user?._id },
-                    $push: { seatPosition: { playerId: user?._id, index } },
+                    _id: matchId,
+                    // end: false,
+                    // [`players.${index}`]: null
+                },
+                {
+
+                    $set: {
+                        [`players.${index}`]: user?._id,
+                    },
+                    $pull: {
+                        watchers: user?._id
+                    }
                 },
                 { new: true }
-            ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').lean()
+            ).populate('players', '_id name socketId coins').lean()
+            // matchSchema.model.findOne({ _id: matchId })
         ]);
 
 
         console.log("::::::::::::::::::::Jo2222222222in Room::::::::", userData?.name, matchData);
 
-        if (!userData || !matchData) return io.to(socketId).emit(socketEmit.errorLog, { message: "Invalid match id ." });
+        if (!userData || !matchData) return;
 
 
-        // send emit
-        this.sendCommonEmit(io, matchData, socketEmit.joinRoomSuccess)
 
+        let totalPlayer = 0
 
-        if (matchData?.start == false && (matchData?.players.length == gameConfig?.minPlayer) && !matchData?.waitForNextRount) {
+        matchData.players.forEach((player, index) => {
+            if (player?._id) {
+                player['index'] = index
+                totalPlayer += 1
+            }
+        });
+
+        matchData?.players.map((x) => {
+            io.to(x?.socketId).emit(socketEmit.joinRoomSuccess, { ...matchData, selfId: x?._id })
+        })
+        // You can return or emit the updatedMatch here
+
+        if (matchData?.start || (totalPlayer < gameConfig?.minPlayer)) return;
+        else {
             this.startMatch(io, matchData)
         }
 
@@ -626,27 +640,9 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
     }
 };
 
-module.exports.sendCommonEmit = (io, matchData, emit) => {
-    try {
 
-        matchData.players = matchData.players.map(player => {
-            const seat = matchData.seatPosition.find(
-                x => String(x?.playerId) === String(player?._id)
-            );
-            if (seat) return { ...player, index: seat?.index ?? null }
-        });
 
-        console.log("::::::;;chy,matchData.players", matchData.players)
 
-        matchData?.players.map((x) => {
-            io.to(x?.socketId).emit(emit, { ...matchData, selfId: x?._id })
-        })
-
-    } catch (error) {
-        console.log(":::::::::::::errrrrr send coom emit:::::", error)
-    }
-
-}
 
 
 

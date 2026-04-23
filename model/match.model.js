@@ -17,7 +17,7 @@ const playerDataSchema = mongoose.Schema({
     },
     totalBet: {
         type: Number,
-        default: false
+        default: 0
     },
     isSeen: {
         type: Boolean,
@@ -31,10 +31,29 @@ const playerDataSchema = mongoose.Schema({
         type: Boolean,
         default: false
     },
+    index: {
+        type: Number,
+        default: null
+    }
 
 }, {
     timestamps: true
 });
+
+const seatPosition = mongoose.Schema({
+
+    playerId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "user",
+    },
+    index: {
+        type: Number,
+        default: null
+    },
+}, {
+    timestamps: true
+});
+
 
 
 const matchSchema = mongoose.Schema({
@@ -44,6 +63,10 @@ const matchSchema = mongoose.Schema({
         ref: "user",
     }],
     exitPlayers: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "user",
+    }],
+    watchers: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: "user",
     }],
@@ -64,13 +87,12 @@ const matchSchema = mongoose.Schema({
         ref: "user",
         default: null
     },
-    room: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "room",
+    roomId: {
+        type: String,
         default: null
     },
     playersData: [playerDataSchema],
-
+    seatPosition: [seatPosition],
     pot: {
         type: Number,
         default: 0
@@ -116,6 +138,10 @@ const matchSchema = mongoose.Schema({
         type: String,
         default: null
     },
+    waitForNextRount: {
+        type: Boolean,
+        default: false
+    }
 }, {
     timestamps: true
 });

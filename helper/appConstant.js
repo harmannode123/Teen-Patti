@@ -53,6 +53,8 @@ module.exports.socketEmit = {
     acceptSideShow: "acceptSideShow",
     sideShowWinner: "sideShowWinner",
     "respondToSideShow": "respondToSideShow",
+    "fetchLobbyList": "fetchLobbyList",
+    "watchRoom": "watchRoom"
 
 }
 
@@ -165,7 +167,7 @@ module.exports.suits = {
 
 module.exports.gameConfig = {
     maxPlayer: 8,
-    minPlayer: 2,
+    minPlayer: 3,
     bootAmount: 10,
     gameStartAfterCreate: 15000,
 }

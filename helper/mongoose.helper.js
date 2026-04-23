@@ -2,6 +2,7 @@ const utils = require('./utils');
 const adminSchema = require('../model/admin.model');
 const shopSchema = require("../model/shop.model");
 const userSchema = require("../model/user.model")
+const matchSchema = require("../model/match.model");
 
 
 module.exports.createDefaultAdmin = async () => {
@@ -9,6 +10,18 @@ module.exports.createDefaultAdmin = async () => {
     const updateRequest = await userSchema.model.updateMany({ joinRequest: true }, { joinRequest: false });
     const totalBoat = await userSchema.model.find({ isBoat: true })
     if (totalBoat?.length < 2) await userSchema.model.insertMany([{ name: "Harry", isBoat: true }, { name: "Jerry", isBoat: true }])
+
+
+    await matchSchema.model.deleteMany({})
+
+    const newRooms = []
+    for (let i = 1; i <= 2; i++) newRooms.push({ roomId: i })
+
+    await matchSchema.model.insertMany(newRooms)
+
+
+
+
 }
 
 module.exports.createShopItem = async () => {

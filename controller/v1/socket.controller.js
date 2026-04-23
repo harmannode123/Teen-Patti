@@ -20,7 +20,7 @@ module.exports.socketController = (io) => {
 
         // Join room (online or friend)
         // socket.on(socketEmit.joinRoom, async (data) => gameplayController.joinRoom(io, user, socketId, data));
-        socket.on(socketEmit.joinRoom, async (data) => gameplayController.joinRoom(io, user, socketId, data));
+        socket.on(socketEmit.joinRoom, async (data) => gameplayController.joinRoomNew(io, user, socketId, data));
 
         socket.on(socketEmit.placeBet, async (data) => gameplayController.placeBet(io, user, socketId, data));
 
@@ -29,6 +29,10 @@ module.exports.socketController = (io) => {
         socket.on(socketEmit.sideShow, async (data) => gameplayController.sideShow(io, user, socketId, data));
 
         socket.on(socketEmit.respondToSideShow, async (data) => gameplayController.respondToSideShow(io, user, socketId, data));
+
+        socket.on(socketEmit.fetchLobbyList, async (data) => gameplayController.fetchLobbyList(io, user, socketId, data));
+
+        socket.on(socketEmit.watchRoom, async (data) => gameplayController.watchRoom(io, user, socketId, data));
 
 
         // Dash call

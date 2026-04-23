@@ -5,7 +5,7 @@ const fs = require('fs');
 const salt = process.env.SALT;
 const { messagesEnglish, suits } = require('./appConstant');
 const cards = require('../helper/card.json')
-const matchSchema = require('../model/match.model')
+const matchSchema = require('../model/match.model');
 
 module.exports.createErrorResponse = (message, success = false) => {
     return { success, message: messagesEnglish[message] };
@@ -278,3 +278,12 @@ module.exports.compareResult = (p1, p2) => {
     }
 
 }
+
+module.exports.checkIndex = (matchData, playerId) => {
+    let seat = matchData?.seatPosition.find(x => (String(x?.playerId) == String(playerId)));
+    let index = seat['index']
+    return index
+}
+
+
+
