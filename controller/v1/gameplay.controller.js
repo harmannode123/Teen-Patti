@@ -34,10 +34,15 @@ const sortPlayerAccSeat = (matchData) => {
 
         let data = matchData.players.map(player => {
             return {
-                ...player.toObject(),
+                ...player,
                 index: checkIndex(matchData, player?._id)
             };
         });
+
+        data = data.filter(x => x.index >= 0)
+
+        console.log("::::::::::::::::::index::::", data)
+
 
         data.sort((a, b) => a.index - b.index); // ascending order
 
@@ -49,22 +54,26 @@ const sortPlayerAccSeat = (matchData) => {
 
 
 module.exports.startMatch = async (io, matchData) => {
-    console.log(":::: :::::::::::::::::::::::  startMatch :::::::::::::::::::::::::::::: ");
+    console.log(":::: :::::::::::::::::::::::  startMatch :::::::::::::::::::::::::::::: ", matchData?._id);
 
     try {
-        let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins')
+        let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins').lean()
 
         if (!startMatch) return;
 
+        let sortPlayer = sortPlayerAccSeat(startMatch)
         const updateEconomy = []
         let bootAmount = 0
         let currentBetAmount = gameConfig?.bootAmount
 
-        startMatch.players.map((x) => {
-            io.to(x?.socketId).emit(socketEmit.matchStart, { ...matchData })
+        sortPlayer.map((x) => {
+            //  io.to(x?.socketId).emit(socketEmit.matchStart, { ...matchData })
             updateEconomy.push({ user: x?._id, matchId: startMatch?._id, betAmount: gameConfig?.bootAmount });
             bootAmount = bootAmount + gameConfig?.bootAmount
         })
+
+        this.sendCommonEmit(io, startMatch, socketEmit.matchStart)
+
 
 
 
@@ -80,7 +89,6 @@ module.exports.startMatch = async (io, matchData) => {
         //Distribute Card
         const cards = shuffle(cardDeck)
 
-        let sortPlayer = sortPlayerAccSeat(startMatch)
 
         const playersData = []
 
@@ -110,6 +118,8 @@ module.exports.startMatch = async (io, matchData) => {
 
     } catch (error) {
         console.log("::::::::::::::::::::::::::::::::::::::start match error::::::::::", error)
+        // return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
+
     }
 };
 
@@ -278,11 +288,12 @@ module.exports.seenCard = async (io, user, socketId, data) => {
         console.log(":::::Seen cards::::::", cards)
 
 
-        const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(userId)));
+        // const index = matchData?.playersData.findIndex(x => (String(x?.playerId) == String(userId)));
 
+        const index = checkIndex(matchData, userId)
         matchData.players.forEach((player) => {
             if (String(player?._id) == String(userId)) io.to(player?.socketId).emit(socketEmit.seenCardSuccess, { _id: matchData?._id, userId, index, cards });
-            else io.to(player?.socketId).emit(socketEmit.seenCardSuccess, { _id: matchData?._id, userId, index });
+            // else io.to(player?.socketId).emit(socketEmit.seenCardSuccess, { _id: matchData?._id, userId, index });
         });
 
 
@@ -441,11 +452,13 @@ module.exports.startNextRound = async (io, matchData) => {
         })
 
         let seatPosition = matchData.seatPosition.filter(x => {
-            if (x?.playerId && !exitPlayers.includes(String(x?.playerId)) && players.includes(String(x?.playerId))) return x
+            //We can change this in  future only new player save the player array
+            if (x?.playerId && !exitPlayers.includes(String(x?.playerId))) return x
         })
 
+
         let [newMatch] = await Promise.all([
-            matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true })
+            matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers: matchData?.watchers })
         ])
         newMatch = newMatch.toObject()
 
@@ -566,6 +579,7 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
             turn: matchData?.turn,
             players: matchData?.players,
             timer: 10,
+            roomId: matchData?.roomId
         }
 
 
@@ -581,7 +595,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
     try {
         let { roomId, index = -1 } = data;
 
-        console.log("::::::::::::::::::::Join Room::::::::", user?.name);
+        console.log("::::::::::::::::::::Join Room::::::::", user?.name, data);
 
         if (!roomId || index < 0) return;
 
@@ -600,6 +614,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
                 {
                     $addToSet: { players: user?._id },
                     $push: { seatPosition: { playerId: user?._id, index } },
+                    $pull: { watchers: user?._id }
                 },
                 { new: true }
             ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').lean()
@@ -648,5 +663,69 @@ module.exports.sendCommonEmit = (io, matchData, emit) => {
 
 }
 
+
+// module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
+//     try {
+//         let { roomId, index = -1 } = data;
+
+//         console.log("::::::::::::::::::::Join Room::::::::", user?.name, data);
+
+//         if (!roomId || index < 0) return;
+
+//         let [userData, matchData] = await Promise.all([
+//             userSchema.model.findOne({ _id: user?._id, socketId }),
+//             matchSchema.model.findOneAndUpdate({
+//                 roomId,
+//                 players: { $ne: user?._id },
+//                 end: false,
+//                 seatPosition: {
+//                     $not: {
+//                         $elemMatch: { index: index }
+//                     }
+//                 }
+//             },
+//                 {
+//                     $addToSet: { players: user?._id },
+//                     $push: { seatPosition: { playerId: user?._id, index } },
+//                     $pull: { watchers: user?._id }
+//                 },
+//                 { new: true }
+//             ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').lean()
+//         ]);
+
+
+//         console.log("::::::::::::::::::::Jo2222222222in Room::::::::", userData?.name, matchData);
+
+//         if (!userData || !matchData) return io.to(socketId).emit(socketEmit.errorLog, { message: "Invalid match id ." });
+
+
+//         // send emit
+//         this.sendCommonEmit(io, matchData, socketEmit.joinRoomSuccess)
+
+
+//         if (matchData?.start == false && (matchData?.players.length == 4) && !matchData?.waitForNextRount) {
+
+//             const match = []
+//             for (let i = 0; i < 10; i++) {
+//                 match.push({ roomId: matchData?.roomId, players: matchData?.players, seatPosition: matchData.seatPosition })
+//             }
+//             const db = await matchSchema.model.insertMany(match)
+
+//             const matche = await matchSchema.model.find({ start: false }).sort({ createdAt: -1 }).limit(100).lean()
+
+//             for (let i = 0; i < matche.length; i++) {
+//                 this.startMatch(io, matche[i])
+
+//             }
+
+
+//         }
+
+
+//     } catch (error) {
+//         console.log(error);
+//         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
+//     }
+// };
 
 

@@ -281,7 +281,7 @@ module.exports.compareResult = (p1, p2) => {
 
 module.exports.checkIndex = (matchData, playerId) => {
     let seat = matchData?.seatPosition.find(x => (String(x?.playerId) == String(playerId)));
-    let index = seat['index']
+    let index = seat?.index ?? -1
     return index
 }
 

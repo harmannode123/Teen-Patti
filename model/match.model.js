@@ -146,5 +146,6 @@ const matchSchema = mongoose.Schema({
     timestamps: true
 });
 
+matchSchema.index({ roomId: 1, players: 1 });
 
 module.exports.model = mongoose.model("match", matchSchema);
