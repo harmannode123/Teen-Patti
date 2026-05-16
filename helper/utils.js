@@ -267,12 +267,14 @@ module.exports.compareResult = (p1, p2) => {
         player1: {
             cards: p1Card,
             hand: p1Eval.name,
-            playerId: p1?.playerId
+            playerId: p1?.playerId,
+            index: p1?.index || -1
         },
         player2: {
             cards: p2Card,
             hand: p2Eval.name,
-            playerId: p2?.playerId
+            playerId: p2?.playerId,
+            index: p2?.index || -1
 
         }
     }

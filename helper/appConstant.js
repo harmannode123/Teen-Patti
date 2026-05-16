@@ -168,7 +168,7 @@ module.exports.suits = {
 module.exports.gameConfig = {
     maxPlayer: 8,
     minPlayer: 3,
-    bootAmount: 10,
+    bootAmount: 1000,
     gameStartAfterCreate: 15000,
 }
 

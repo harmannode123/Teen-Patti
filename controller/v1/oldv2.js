@@ -608,10 +608,7 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
                 },
                 roomId: 1,
                 start: 1,
-                end: 1,
-                watchers: { $size: "$watchers" },
-                entryCoins: { $literal: 1000 },
-                roomName: 1
+                end: 1
             }
         }
     ])
@@ -748,5 +745,3 @@ module.exports.sendCommonEmitForWatcher = (io, matchData, emit, data = {}) => {
     }
 
 }
-
-

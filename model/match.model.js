@@ -91,6 +91,10 @@ const matchSchema = mongoose.Schema({
         type: String,
         default: null
     },
+    roomName: {
+        type: String,
+        default: null
+    },
     playersData: [playerDataSchema],
     seatPosition: [seatPosition],
     pot: {

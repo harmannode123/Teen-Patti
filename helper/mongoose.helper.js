@@ -14,13 +14,33 @@ module.exports.createDefaultAdmin = async () => {
 
     await matchSchema.model.deleteMany({})
 
+    const roomList = [
+        {
+            id: 1,
+            name: "Simple Teen Patti"
+        },
+        {
+            id: 2,
+            name: "Muflis"
+        },
+        {
+            id: 3,
+            name: "Joker"
+        },
+        {
+            id: 4,
+            name: "4 Card Teen Patti"
+        },
+        {
+            id: 5,
+            name: "2 Card Teen Patti"
+        }
+    ];
+
     const newRooms = []
-    for (let i = 1; i <= 2; i++) newRooms.push({ roomId: i })
+    for (let i = 1; i <= roomList.length; i++) newRooms.push({ roomId: i, roomName: roomList[i - 1]?.name })
 
     await matchSchema.model.insertMany(newRooms)
-
-
-
 
 }
 
