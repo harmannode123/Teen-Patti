@@ -54,7 +54,7 @@ module.exports.startMatch = async (io, matchData) => {
     console.log(":::: :::::::::::::::::::::::  startMatch :::::::::::::::::::::::::::::: ", matchData?._id);
 
     try {
-        let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins').lean()
+        let startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, start: false }, { start: true }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
 
         if (!startMatch) return;
 
@@ -70,7 +70,7 @@ module.exports.startMatch = async (io, matchData) => {
         })
 
         this.sendCommonEmit(io, startMatch, socketEmit.matchStart)
-        //  this.sendCommonEmitForWatcher(io, startMatch, socketEmit.matchStart)
+        this.sendCommonEmitForWatcher(io, startMatch, socketEmit.matchStart)
 
 
 
@@ -99,17 +99,20 @@ module.exports.startMatch = async (io, matchData) => {
         setTimeout(async () => {
             console.log(":::: CArd Distribution:: :::: ", playersData);
 
-            startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, }, { playersData, pot: bootAmount, turn: currentPlayerTurn, currentBetAmount }, { new: true }).populate('players', 'name socketId coins')
+            startMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, }, { playersData, pot: bootAmount, turn: currentPlayerTurn, currentBetAmount }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
 
             // 🎴 STEP 3: Send cards to each player (PRIVATE)
             startMatch.players.forEach((player) => {
                 io.to(player.socketId).emit(socketEmit.cardDistributeSuccess, { message: "Card Distribuation success.", _id: startMatch?._id });
             });
 
+            this.sendCommonEmitForWatcher(io, startMatch, socketEmit.cardDistributeSuccess)
+
+
             setTimeout(() => {
                 sendBetTurnEmit(io, currentPlayerTurn, startMatch)
 
-            }, 5000)
+            }, 3000)
 
         }, 5000)
 
@@ -139,7 +142,7 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
             io.to(player.socketId).emit(socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
         });
 
-        // this.sendCommonEmitForWatcher(io, matchData, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 10, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable })
+        this.sendCommonEmitForWatcher(io, matchData, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable })
 
 
         global.turnTimers[String(matchData?._id)] = setTimeout(async () => {
@@ -173,7 +176,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
 
         let [userData, matchData] = await Promise.all([
             userSchema.model.findOne({ ...check }),
-            matchSchema.model.findOne({ start: true, end: false, turn: userId, }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
+            matchSchema.model.findOne({ start: true, end: false, turn: userId, }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
         ])
 
 
@@ -221,7 +224,7 @@ module.exports.placeBet = async (io, user, socketId, data) => {
             ...(matchData?.sideShow ? { sideShow: false } : {}),
             ...(!matchData?.raise && isRaisebet ? { raise: true } : {}),
 
-        }, { new: true }).populate('players', 'name socketId coins').lean()
+        }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
 
 
         const index = checkIndex(matchData, userId)
@@ -234,6 +237,9 @@ module.exports.placeBet = async (io, user, socketId, data) => {
         matchData.players.forEach((player) => {
             io.to(player.socketId).emit(socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin, selfBet });
         });
+
+
+        this.sendCommonEmitForWatcher(io, matchData, socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin, selfBet })
 
         if (turnManager(matchData?.playersData, nextPlayerTurnId)) {
 
@@ -257,6 +263,9 @@ module.exports.placeBet = async (io, user, socketId, data) => {
             matchData.players.forEach((player) => {
                 io.to(player.socketId).emit(socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {} });
             });
+
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {} })
+
 
             matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
             this.startNextRound(io, matchData)
@@ -678,7 +687,8 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
                     $pull: { watchers: user?._id }
                 },
                 { new: true }
-            ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').lean()
+            ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').
+                populate('watchers', '_id name socketId coins').lean()
         ]);
 
 
@@ -689,7 +699,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
 
         // send emit
         this.sendCommonEmit(io, matchData, socketEmit.joinRoomSuccess)
-        //this.sendCommonEmitForWatcher(io, matchData, socketEmit.joinRoomSuccess)
+        this.sendCommonEmitForWatcher(io, matchData, socketEmit.joinRoomSuccess)
 
 
         if (matchData?.start == false && (matchData?.players.length == gameConfig?.minPlayer) && !matchData?.waitForNextRount) {
@@ -710,13 +720,22 @@ module.exports.sendCommonEmit = (io, matchData, emit) => {
             const seat = matchData.seatPosition.find(
                 x => String(x?.playerId) === String(player?._id)
             );
-            if (seat) return { ...player, index: seat?.index ?? null }
+            if (seat) return { ...player, index: seat?.index ?? -1 }
         });
+
+        const payload = {
+            _id: matchData?._id,
+            players: matchData?.players,
+            roomId: matchData?.roomId,
+            start: matchData?.start,
+            end: matchData?.end,
+        }
+
 
         console.log("::::::;;chy,matchData.players", matchData.players)
 
         matchData?.players.map((x) => {
-            io.to(x?.socketId).emit(emit, { ...matchData, selfId: x?._id })
+            io.to(x?.socketId).emit(emit, { ...payload, selfId: x?._id })
         })
 
     } catch (error) {
@@ -730,7 +749,10 @@ module.exports.sendCommonEmitForWatcher = (io, matchData, emit, data = {}) => {
     try {
         const { watchers, start, end } = matchData
 
-        if (matchData) return
+
+        console.log("::::::::::;;;watchers ::::::::::::::::send::::", matchData?.watchers)
+
+        if (!matchData || watchers.length == 0) return
 
         players = matchData.players.map(player => {
             const seat = matchData.seatPosition.find(
@@ -739,8 +761,13 @@ module.exports.sendCommonEmitForWatcher = (io, matchData, emit, data = {}) => {
             if (seat) return { ...player, index: seat?.index ?? null }
         });
 
+        const payload = {
+            _id: matchData?._id, players, roomId: matchData?.roomId, start, end,
+        }
+
+
         matchData?.watchers && watchers.map((x) => {
-            io.to(x?.socketId).emit(emit, { players, start, end, selfId: x?._id, ...data })
+            io.to(x?.socketId).emit(emit, { ...payload, selfId: x?._id, ...data })
         })
 
     } catch (error) {
