@@ -95,7 +95,9 @@ module.exports.languageSelector = (req, res, next) => {
 }
 
 module.exports.turnManager = (playersData, currentUser) => {
-    const activePlayers = playersData?.filter(x => !x?.isPacked) || [];
+    // Betting turn: packed + ALL-IN dono skip (all-in player bet nahi kar sakta).
+    // (Non-all-in games me isAllIn hamesha false -> koi behaviour change nahi.)
+    const activePlayers = playersData?.filter(x => !x?.isPacked && !x?.isAllIn) || [];
 
     if (activePlayers.length <= 1) return null;
 
@@ -247,38 +249,251 @@ const compareHands = (p1, p2) => {
     return 0
 }
 
-module.exports.compareResult = (p1, p2) => {
+// Generate every possible group of `groupSize` cards out of `cards`.
+// e.g. pick 3 cards out of 4 -> returns all 4 possible 3-card groups.
+const getCardCombinations = (cards, groupSize) => {
+    if (groupSize <= 0) return [[]]
+    if (!cards || cards.length < groupSize) return []
+    if (groupSize === cards.length) return [cards.slice()]
+    if (groupSize === 1) return cards.map(card => [card])
 
-    const p1Card = p1?.cards
-    const p2Card = p2?.cards
+    const combinations = []
+    cards.forEach((currentCard, currentIndex) => {
+        const remainingCards = cards.slice(currentIndex + 1)
+        const smallerGroups = getCardCombinations(remainingCards, groupSize - 1)
+        smallerGroups.forEach(group => combinations.push([currentCard, ...group]))
+    })
+    return combinations
+}
 
-    const p1Eval = evaluateHand(p1Card)
-    const p2Eval = evaluateHand(p2Card)
-    const result = compareHands(p1Eval, p2Eval)
+const FULL_DECK = require('./card.json')
+
+// Resolve a player's best 3-card hand regardless of how many cards were dealt.
+//  - 3 cards (classic) : evaluate as-is
+//  - >3 cards (4-card) : CHOOSE the best finalHandSize-subset of the dealt cards
+//  - <3 cards (2-card) : ASSUME the missing card(s) from the deck to build the
+//                        strongest possible finalHandSize combo (official 2-card rule)
+// `usedCards` holds the actual cards that formed the winning hand (assumed cards
+// included), so the client can display the resolved combination.
+const evaluateBestHand = (dealtCards, finalHandSize = 3) => {
+    if (!dealtCards || dealtCards.length === 0) return evaluateHand(dealtCards)
+
+    if (dealtCards.length === finalHandSize) {
+        const handResult = evaluateHand(dealtCards)
+        handResult.usedCards = dealtCards
+        return handResult
+    }
+
+    let possibleHands
+
+    if (dealtCards.length > finalHandSize) {
+        // four-card style: pick the best subset of the cards we already hold
+        possibleHands = getCardCombinations(dealtCards, finalHandSize)
+    } else {
+        // two-card style: assume the missing card(s) from the remaining deck
+        const dealtCardIds = new Set(dealtCards.map(card => card?.cardId))
+        const remainingDeck = FULL_DECK.filter(card => !dealtCardIds.has(card?.cardId))
+        const missingCardCount = finalHandSize - dealtCards.length
+        const assumedCardSets = getCardCombinations(remainingDeck, missingCardCount)
+        possibleHands = assumedCardSets.map(assumedCards => [...dealtCards, ...assumedCards])
+    }
+
+    let bestHand = null
+    let bestHandCards = null
+
+    for (const hand of possibleHands) {
+        const handResult = evaluateHand(hand)
+        if (!bestHand || compareHands(handResult, bestHand) > 0) {
+            bestHand = handResult
+            bestHandCards = hand
+        }
+    }
+
+    bestHand.usedCards = bestHandCards
+    return bestHand
+}
+
+module.exports.evaluateBestHand = evaluateBestHand
+
+// JOKER / ZHANDU VARIANT ----------------------------------------------------
+// One OR MORE ranks are "wild" (the joker value(s)). Any dealt card whose
+// cardValue matches a joker value can be assumed to be ANY card. We keep the
+// non-joker cards fixed and try every possible replacement for the joker card(s),
+// then return the strongest resulting hand. `usedCards` shows the resolved cards.
+//
+// `jokerValue` accepts:
+//   - a single number  (classic single-joker variant)            -> e.g. 7
+//   - an array of nums  (ZHANDU: up to 3 opened jokers are wild)  -> e.g. [7,3,9]
+// Empty/null -> no wild ranks -> behaves like a normal best hand.
+const evaluateBestHandWithJoker = (dealtCards, jokerValue, finalHandSize = 3) => {
+    if (!dealtCards || dealtCards.length === 0) return evaluateHand(dealtCards)
+
+    // Normalize joker value(s) to a Set of wild ranks (single ya array dono chalein).
+    const jokerValueSet = new Set(
+        Array.isArray(jokerValue)
+            ? jokerValue.filter(v => v != null)
+            : (jokerValue != null ? [jokerValue] : [])
+    )
+
+    const fixedCards = dealtCards.filter(card => !jokerValueSet.has(card?.cardValue))
+    const jokerCount = dealtCards.length - fixedCards.length
+
+    // No joker in this player's hand -> evaluate it like a normal hand
+    if (jokerCount === 0) return evaluateBestHand(dealtCards, finalHandSize)
+
+    // Replacement cards must be real, distinct cards not already in the hand
+    const dealtCardIds = new Set(dealtCards.map(card => card?.cardId))
+    const remainingDeck = FULL_DECK.filter(card => !dealtCardIds.has(card?.cardId))
+
+    let bestHand = null
+    let bestHandCards = null
+
+    for (const replacementCards of getCardCombinations(remainingDeck, jokerCount)) {
+        const candidateHand = [...fixedCards, ...replacementCards]
+        const handResult = evaluateBestHand(candidateHand, finalHandSize)
+        if (!bestHand || compareHands(handResult, bestHand) > 0) {
+            bestHand = handResult
+            bestHandCards = handResult.usedCards
+        }
+    }
+
+    bestHand.usedCards = bestHandCards
+    return bestHand
+}
+
+module.exports.evaluateBestHandWithJoker = evaluateBestHandWithJoker
+
+// Resolve a player's final hand based on the match's game variant.
+// Joker uses the wild-card evaluator; everyone else (classic / 4-card / 2-card /
+// muflis) uses the normal best-hand evaluator. Muflis does NOT change the hand
+// here — only its ranking direction differs, which is applied in compareEvaluatedHands.
+const resolvePlayerHand = (dealtCards, matchContext = {}) => {
+    const { gameType, jokerValue, jokerValues } = matchContext
+
+    // ZHANDU: jokerValues = abhi tak khule jokers ke cardValue ka array (0..3 wild ranks).
+    if (gameType === "zhandu") {
+        return evaluateBestHandWithJoker(dealtCards, jokerValues || [])
+    }
+
+    if (gameType === "joker" && jokerValue != null) {
+        return evaluateBestHandWithJoker(dealtCards, jokerValue)
+    }
+    return evaluateBestHand(dealtCards)
+}
+
+// Compare two evaluated hands honoring the variant's ranking direction.
+// Muflis reverses the ranking (weakest normal hand wins), so we flip the normal
+// comparison. Returns > 0 if handA wins, < 0 if handB wins, 0 = draw.
+const compareEvaluatedHands = (handA, handB, gameType) => {
+    const normalResult = compareHands(handA, handB)
+    return gameType === "muflis" ? -normalResult : normalResult
+}
+
+module.exports.compareResult = (player1, player2, matchContext = {}) => {
+
+    const player1Cards = player1?.cards
+    const player2Cards = player2?.cards
+
+    const player1Hand = resolvePlayerHand(player1Cards, matchContext)
+    const player2Hand = resolvePlayerHand(player2Cards, matchContext)
+    const result = compareEvaluatedHands(player1Hand, player2Hand, matchContext?.gameType)
 
     let winner = null
 
-    if (result > 0) winner = p1?.playerId
-    else if (result < 0) winner = p2?.playerId
+    if (result > 0) winner = player1?.playerId
+    else if (result < 0) winner = player2?.playerId
     else winner = "DRAW"
 
     return {
         winner,
         player1: {
-            cards: p1Card,
-            hand: p1Eval.name,
-            playerId: p1?.playerId,
-            index: p1?.index || -1
+            cards: player1Cards,
+            bestCards: player1Hand.usedCards,
+            hand: player1Hand.name,
+            playerId: player1?.playerId,
+            index: player1?.index || -1
         },
         player2: {
-            cards: p2Card,
-            hand: p2Eval.name,
-            playerId: p2?.playerId,
-            index: p2?.index || -1
+            cards: player2Cards,
+            bestCards: player2Hand.usedCards,
+            hand: player2Hand.name,
+            playerId: player2?.playerId,
+            index: player2?.index || -1
 
         }
     }
 
+}
+
+// ZHANDU: match ke jokerCards me se sirf KHULE (opened) jokers ke cardValue ka
+// array do. Yahi wild ranks hote hain jo hand evaluation me lagte hain.
+// (non-zhandu / no jokers -> empty array.)
+module.exports.getOpenedJokerValues = (matchData) => {
+    if (!matchData?.jokerCards?.length) return []
+    return matchData.jokerCards
+        .filter(j => j?.opened && j?.card?.cardValue != null)
+        .map(j => j.card.cardValue)
+}
+
+// ZHANDU + ALL-IN (Phase 5): is player par abhi konse joker apply hote.
+//  - Normal player (non-all-in): saare KHULE jokers.
+//  - All-in player: khule jokers me se sirf pehle `appliedJokers` (J1,J2 ya J1,J2,J3),
+//    kyunki all-in ke waqt uska joker count freeze ho jaata (§5). opened values order
+//    me hote (J1,J2,J3), to slice(0, appliedJokers). Zyada joker baad me khulein tab bhi
+//    all-in player ko utne hi (freeze). openedCount se bhi cap ho jaata (min).
+module.exports.getApplicableJokerValues = (matchData, player) => {
+    const opened = module.exports.getOpenedJokerValues(matchData)
+    if (player?.isAllIn && player?.appliedJokers != null) {
+        return opened.slice(0, player.appliedJokers)
+    }
+    return opened
+}
+
+// ALL-IN (Phase 5): SIDE POTS banana. Har player ka contribution = boot + totalBet
+// (FOLDED bhi include -> unka paisa "dead money" pots me jaata, par wo jeet nahi sakte).
+// Sabse chhoti contribution se layer-by-layer pots: har pot ka `eligible` = wahi
+// non-folded players jinhone us level tak daala. Uncontested layer (sirf 1 eligible)
+// ka paisa us player ko wapas mil jaata (wo akela "jeet" leta).
+module.exports.buildSidePots = (playersData, bootAmount = 0) => {
+    const remaining = {}
+    ;(playersData || []).forEach(p => { remaining[String(p?.playerId)] = (bootAmount || 0) + (p?.totalBet || 0) })
+
+    const eligible = (playersData || []).filter(p => !p?.isPacked).map(p => String(p?.playerId))
+    const pots = []
+    let guard = 0
+    while (guard++ < 100) {
+        const activeElig = eligible.filter(id => remaining[id] > 0)
+        if (!activeElig.length) break
+        const level = Math.min(...activeElig.map(id => remaining[id]))
+        let amount = 0
+        for (const id in remaining) {
+            const take = Math.min(level, remaining[id])
+            if (take > 0) { amount += take; remaining[id] -= take }
+        }
+        if (amount > 0) pots.push({ amount, eligible: [...activeElig] })
+    }
+    // Bacha hua folded over-contribution (rare) -> last pot me daal do (total conserve).
+    const leftover = Object.values(remaining).reduce((a, b) => a + (b > 0 ? b : 0), 0)
+    if (leftover > 0 && pots.length) pots[pots.length - 1].amount += leftover
+    return pots
+}
+
+// ALL-IN (Phase 5): ek pot ke eligible players me se WINNER(s). Har entry ka apna
+// jokerValues (all-in wale ko kam). Best hand jeeta; tie -> multiple winners (split).
+// entries: [{ id, cards, jokerValues }]  ->  { winners: [id...], handName }
+module.exports.pickPotWinners = (entries, gameType) => {
+    let best = null, winners = [], handName = null
+    for (const e of entries || []) {
+        const hand = (e?.jokerValues && e.jokerValues.length)
+            ? evaluateBestHandWithJoker(e.cards, e.jokerValues)
+            : evaluateBestHand(e.cards)
+        if (!best) { best = hand; winners = [e.id]; handName = hand.name; continue }
+        let cmp = compareHands(hand, best)
+        if (gameType === "muflis") cmp = -cmp
+        if (cmp > 0) { best = hand; winners = [e.id]; handName = hand.name }
+        else if (cmp === 0) { winners.push(e.id) }
+    }
+    return { winners, handName }
 }
 
 module.exports.checkIndex = (matchData, playerId) => {

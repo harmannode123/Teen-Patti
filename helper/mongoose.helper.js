@@ -9,38 +9,61 @@ module.exports.createDefaultAdmin = async () => {
 
     const updateRequest = await userSchema.model.updateMany({ joinRequest: true }, { joinRequest: false });
     const totalBoat = await userSchema.model.find({ isBoat: true })
-    if (totalBoat?.length < 2) await userSchema.model.insertMany([{ name: "Harry", isBoat: true }, { name: "Jerry", isBoat: true }])
+    // if (totalBoat?.length < 2) await userSchema.model.insertMany([{ name: "Harry", isBoat: true }, { name: "Jerry", isBoat: true }])
 
 
-    await matchSchema.model.deleteMany({})
+    //await matchSchema.model.deleteMany({})
 
     const roomList = [
         {
             id: 1,
-            name: "Simple Teen Patti"
+            name: "Simple Teen Patti",
+            gameType: "teenpatti"
         },
+        // {
+        //     id: 2,
+        //     name: "Muflis",
+        //     gameType: "muflis"
+        // },
+        // {
+        //     id: 3,
+        //     name: "Joker",
+        //     gameType: "joker"
+        // },
+        // {
+        //     id: 4,
+        //     name: "4 Card Teen Patti",
+        //     gameType: "fourcard"
+        // },
+        // {
+        //     id: 5,
+        //     name: "2 Card Teen Patti",
+        //     gameType: "twocard"
+        // },
         {
-            id: 2,
-            name: "Muflis"
+            id: 6,
+            name: "Zhandu",
+            gameType: "zhandu"
         },
-        {
-            id: 3,
-            name: "Joker"
+         {
+            id: 7,
+            name: "Flipper",
+            gameType: "flipper"
         },
-        {
-            id: 4,
-            name: "4 Card Teen Patti"
-        },
-        {
-            id: 5,
-            name: "2 Card Teen Patti"
+         {
+            id: 8,
+            name: "Variation",
+            gameType: "variation"
         }
     ];
 
     const newRooms = []
-    for (let i = 1; i <= roomList.length; i++) newRooms.push({ roomId: i, roomName: roomList[i - 1]?.name })
+    for (let i = 1; i <= roomList.length; i++) newRooms.push({ roomId: i, roomName: roomList[i - 1]?.name, gameType: roomList[i - 1]?.gameType })
 
-    await matchSchema.model.insertMany(newRooms)
+        const checkRoom = await matchSchema.model.find({});
+        if (checkRoom.length === 0) {
+            await matchSchema.model.insertMany(newRooms)
+        }
 
 }
 

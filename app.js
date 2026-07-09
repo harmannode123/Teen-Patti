@@ -19,7 +19,23 @@ const app = express();
 const server = http.createServer(app);
 const v1Routes = require('./route/v1/index.route');
 const { socketController } = require('./controller/v1/socket.controller');
-const io = require('socket.io')(server);
+const io = require('socket.io')(server, {
+    // Allow browser/cross-origin clients to connect
+    cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+// --- Socket.IO Redis Adapter (cluster-ready) -----------------------------
+// Problem: bina adapter ke, process-1 ka io.to(room).emit process-2 ke sockets
+// tak nahi pahunchta. Multiple Node process (PM2 cluster) me emit toot jaata.
+// Fix: Redis pub/sub adapter — sab process Redis ke through emits share karte hain.
+// Humne rooms (user:<id>) already use kiye hain, to adapter lagते hi cross-process
+// emit khud kaam karega. Single process me bhi yeh safe hai (no-op jaisa).
+const { createAdapter } = require('@socket.io/redis-adapter');
+const redis = require('./helper/redis.helper');
+const pubClient = redis;              // existing singleton connection
+const subClient = redis.duplicate();  // adapter ko alag subscribe connection chahiye
+io.adapter(createAdapter(pubClient, subClient));
+
 global.io = io
 // Database connection
 mongoose.connect(mongoUrl)
@@ -35,8 +51,13 @@ mongoose.connect(mongoUrl)
             // language select
             app.use(utils.languageSelector);
 
-            // Socket handler 
+            // Socket handler
             socketController(io);
+
+            // Turn auto-pack worker (BullMQ) — har process me ek. Cluster me bhi
+            // koi bhi process expired turn timer uthaa ke auto-pack chalayega.
+            const { startTurnWorker } = require('./helper/turnTimer.helper');
+            startTurnWorker();
 
             // App middlewares
             app.set("view engine", 'ejs');

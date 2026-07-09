@@ -54,7 +54,12 @@ module.exports.socketEmit = {
     sideShowWinner: "sideShowWinner",
     "respondToSideShow": "respondToSideShow",
     "fetchLobbyList": "fetchLobbyList",
-    "watchRoom": "watchRoom"
+    "watchRoom": "watchRoom",
+    resyncMatch: "resyncMatch",
+    resyncMatchSuccess: "resyncMatchSuccess",
+
+    // ZHANDU: jab koi joker (J1/J2/J3) khulta hai to sab players/watchers ko emit.
+    jokerOpened: "jokerOpened"
 
 }
 
@@ -170,6 +175,36 @@ module.exports.gameConfig = {
     minPlayer: 3,
     bootAmount: 1000,
     gameStartAfterCreate: 15000,
+}
+
+// Game variants supported by the server
+module.exports.gameType = {
+    TEEN_PATTI: "teenpatti",
+    MUFLIS: "muflis",
+    JOKER: "joker",
+    FOUR_CARD: "fourcard",
+    TWO_CARD: "twocard",
+    ZHANDU: "zhandu"
+}
+
+// ZHANDU: kitne joker deck se cut hote hain (center cards) — 3.
+module.exports.zhanduConfig = {
+    jokerCount: 3
+}
+
+// Per-variant config.
+// cardsPerPlayer -> how many cards are dealt to each player
+// handSize       -> how many cards make the final hand (best handSize out of cardsPerPlayer)
+module.exports.gameTypeConfig = {
+    teenpatti: { cardsPerPlayer: 3, handSize: 3 },
+    muflis: { cardsPerPlayer: 3, handSize: 3 },
+    joker: { cardsPerPlayer: 3, handSize: 3 },
+    // zhandu: classic deal (3 cards), par 3 jokers progressive open hote hain
+    zhandu: { cardsPerPlayer: 3, handSize: 3 },
+    fourcard: { cardsPerPlayer: 4, handSize: 3 },
+    // two-card: dealt 2, but the final hand is still the best 3-card combo
+    // made by "assuming" a third card (per official rules), so handSize = 3
+    twocard: { cardsPerPlayer: 2, handSize: 3 }
 }
 
 

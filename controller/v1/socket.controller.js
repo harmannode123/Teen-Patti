@@ -15,6 +15,11 @@ module.exports.socketController = (io) => {
         const socketId = socket.id;
         console.log('::: Connection :::', user.name)
 
+        // Is user ko uske personal room me daalo: "user:<userId>".
+        // Ab is user ko bhejne ke liye socketId ki zaroorat nahi — room kaafi hai.
+        // Reconnect par naya socket bhi yahi room join karega -> emit kabhi miss nahi hoga.
+        socket.join(`user:${user._id}`);
+
 
         //gameplayController.selfExit(io, user, socketId, false)
 
@@ -34,24 +39,9 @@ module.exports.socketController = (io) => {
 
         socket.on(socketEmit.watchRoom, async (data) => gameplayController.watchRoom(io, user, socketId, data));
 
+        // Reconnect ke baad client current match state maangta hai (board resync).
+        socket.on(socketEmit.resyncMatch, async (data) => gameplayController.resyncMatch(io, user, socketId, data));
 
-        // Dash call
-        //socket.on(socketEmit.dashCall, async (data) => gameplayController.dashCall(io, user, socketId, data));
-
-        // Bid call
-        // socket.on(socketEmit.bidCall, async (data) => gameplayController.bidRound(io, user, socketId, data));
-
-        // // Self exit
-        // socket.on(socketEmit.selfExit, async () => gameplayController.selfExit(io, user, socketId));
-
-        // // Card played
-        // socket.on(socketEmit.cardPlayed, async (data) => gameplayController.cardPlayed(io, user, socketId, data));
-
-        // // Estimation Round
-        // socket.on(socketEmit.estimation, async (data) => gameplayController.estimationBid(io, user, socketId, data));
-
-        // // Estimation Round
-        // socket.on(socketEmit.colorRoundestimationBid, async (data) => gameplayController.colorRoundestimationBid(io, user, socketId, data));
 
         // Disconnection
         socket.on(socketEmit.disconnect, async () => gameplayController.selfExit(io, user, socketId, true));
