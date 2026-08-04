@@ -133,6 +133,10 @@ const startTurnWorker = () => {
                     // Round khatam -> agla match shuru.
                     await gameplay._flowStartNext(io, d.matchId);
                     break;
+                case "closeSession":
+                    // Disconnect ke 5 min baad — banda wapas nahi aaya to session close.
+                    await gameplay._flowCloseSession(d.userId);
+                    break;
             }
         },
         { connection: connection.duplicate(), concurrency: 50 }

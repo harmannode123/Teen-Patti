@@ -7,6 +7,7 @@ module.exports.responseStatus = {
     badRequest: 400,
     internalServerError: 500,
     notFound: 404,
+    conflict: 409,
 };
 
 // Socket meit constant
@@ -59,7 +60,8 @@ module.exports.socketEmit = {
     resyncMatchSuccess: "resyncMatchSuccess",
 
     // ZHANDU: jab koi joker (J1/J2/J3) khulta hai to sab players/watchers ko emit.
-    jokerOpened: "jokerOpened"
+    jokerOpened: "jokerOpened",
+    gameList: "gameList",
 
 }
 
@@ -178,7 +180,7 @@ module.exports.gameConfig = {
 }
 
 // Game variants supported by the server
-module.exports.gameType = {
+module.exports.gameTypeConstant = {
     TEEN_PATTI: "teenpatti",
     MUFLIS: "muflis",
     JOKER: "joker",
@@ -191,6 +193,73 @@ module.exports.gameType = {
 module.exports.zhanduConfig = {
     jokerCount: 3
 }
+
+// Default rooms seeded on server start (see mongoose.helper -> createDefaultAdmin)
+module.exports.roomList = [
+    {
+        name: "Simple Teen Patti",
+        gameType: "teenpatti"
+    },
+    // {
+    //     id: 2,
+    //     name: "Muflis",
+    //     gameType: "muflis"
+    // },
+    // {
+    //     id: 3,
+    //     name: "Joker",
+    //     gameType: "joker"
+    // },
+    // {
+    //     id: 4,
+    //     name: "4 Card Teen Patti",
+    //     gameType: "fourcard"
+    // },
+    // {
+    //     id: 5,
+    //     name: "2 Card Teen Patti",
+    //     gameType: "twocard"
+    // },
+    {
+
+        name: "Zhandu",
+        gameType: "zhandu"
+    },
+    {
+
+        name: "Flipper",
+        gameType: "flipper"
+    },
+    {
+
+        name: "Variation",
+        gameType: "variation"
+    }
+];
+
+// Boot-amount tiers used to expand each room into variation rooms
+module.exports.variationList = [
+    {
+        name: "Bronze",
+        bootAmount: 1000,
+    },
+    {
+        name: "Silver",
+        bootAmount: 5000,
+    },
+    {
+        name: "Gold",
+        bootAmount: 10000,
+    },
+    {
+        name: "Platinum",
+        bootAmount: 50000,
+    },
+    {
+        name: "Diamond",
+        bootAmount: 100000,
+    }
+];
 
 // Per-variant config.
 // cardsPerPlayer -> how many cards are dealt to each player
@@ -206,6 +275,8 @@ module.exports.gameTypeConfig = {
     // made by "assuming" a third card (per official rules), so handSize = 3
     twocard: { cardsPerPlayer: 2, handSize: 3 }
 }
+
+
 
 
 

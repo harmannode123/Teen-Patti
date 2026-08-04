@@ -82,7 +82,7 @@ module.exports.adminAuthentication = async (req, res, next) => {
 //     };
 // }
 
-module.exports.socketUserAuthentication = async (socket, next) => {
+module.exports.socketUserAuthenticationOld = async (socket, next) => {
 
     try {
 
@@ -94,11 +94,47 @@ module.exports.socketUserAuthentication = async (socket, next) => {
         if (!token) return next(new Error(utils.createErrorResponse("loginSessionExpired", language)));
 
         const user = await userSchema.model.findOne({ _id: token }).lean();
+        //const user = await userSchema.model.findOne({}).lean();
+
+
+        console.log(":::::::::::::::::;;biiii", user)
 
         if (!user) return next(new Error(utils.createErrorResponse("loginSessionExpired", language)));
 
 
         await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id });
+        socket.user = { ...user, socketId: socket.id, language };
+
+        next();
+
+    } catch (error) {
+        console.log('error=>>>', error)
+        return next(error);
+    };
+}
+
+module.exports.socketUserAuthentication = async (socket, next) => {
+
+    try {
+
+        const token = socket.handshake.headers['authorization'];
+        const language = socket.handshake.headers['language'];
+
+        console.log(":::;tike::", token, typeof token, socket.handshake.headers)
+
+        if (!token) return next(new Error(utils.createErrorResponse("loginSessionExpired", language)));
+
+        // launch pe jo sessionToken diya tha wahi wapas aata hai
+        const tokenDetails = utils.verifyToken(token);
+        if (!tokenDetails) return next(new Error(utils.createErrorResponse("loginSessionExpired", language)));
+
+        const { _id, userId } = tokenDetails;
+        const user = await userSchema.model.findOne({ _id, userId , sessionClosed: false}).lean();
+        if (!user) return next(new Error(utils.createErrorResponse("loginSessionExpired", language)));
+
+
+        // Banda wapas aa gaya -> disconnect stamp hata do.
+        await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id, disconnect: null });
         socket.user = { ...user, socketId: socket.id, language };
 
         next();

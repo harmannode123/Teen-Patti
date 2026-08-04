@@ -46,7 +46,6 @@ mongoose.connect(mongoUrl)
             // pre-execution functions
             utils.createPublicFolder();
             mongooseHelper.createDefaultAdmin()
-            mongooseHelper.createShopItem();
 
             // language select
             app.use(utils.languageSelector);
@@ -58,6 +57,17 @@ mongoose.connect(mongoUrl)
             // koi bhi process expired turn timer uthaa ke auto-pack chalayega.
             const { startTurnWorker } = require('./helper/turnTimer.helper');
             startTurnWorker();
+
+            // Settlement worker (BullMQ repeatable) — closed sessions ka final hisaab
+            // jab unke saare match khatam ho jayein. Cluster me repeat key + Redis lock
+            // se ek hi sweep chalti hai.
+            const { startSettlementWorker } = require('./worker/settlementWorker');
+            startSettlementWorker();
+
+            // Callback worker (BullMQ repeatable) — settle ho chuke sessions ka result
+            // operator ko bhejta hai. Operator `success: true` na de to har 5 min retry.
+            const { startCallbackWorker } = require('./worker/callbackWorker');
+            startCallbackWorker();
 
             // App middlewares
             app.set("view engine", 'ejs');

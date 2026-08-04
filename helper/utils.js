@@ -502,5 +502,11 @@ module.exports.checkIndex = (matchData, playerId) => {
     return index
 }
 
+module.exports.previousWinnerIndex = (matchData, playerId) => {
+    let seat = matchData?.seatPosition.find(x => (String(x?.playerId) == String(playerId)));
+    let index = seat?.index ?? -1
+    return index
+}
+
 
 

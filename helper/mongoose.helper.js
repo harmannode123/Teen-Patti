@@ -1,284 +1,33 @@
 const utils = require('./utils');
 const adminSchema = require('../model/admin.model');
-const shopSchema = require("../model/shop.model");
 const userSchema = require("../model/user.model")
 const matchSchema = require("../model/match.model");
+const { roomList, variationList } = require("./appConstant");
 
 
 module.exports.createDefaultAdmin = async () => {
 
-    const updateRequest = await userSchema.model.updateMany({ joinRequest: true }, { joinRequest: false });
-    const totalBoat = await userSchema.model.find({ isBoat: true })
-    // if (totalBoat?.length < 2) await userSchema.model.insertMany([{ name: "Harry", isBoat: true }, { name: "Jerry", isBoat: true }])
-
-
+    
     //await matchSchema.model.deleteMany({})
 
-    const roomList = [
-        {
-            id: 1,
-            name: "Simple Teen Patti",
-            gameType: "teenpatti"
-        },
-        // {
-        //     id: 2,
-        //     name: "Muflis",
-        //     gameType: "muflis"
-        // },
-        // {
-        //     id: 3,
-        //     name: "Joker",
-        //     gameType: "joker"
-        // },
-        // {
-        //     id: 4,
-        //     name: "4 Card Teen Patti",
-        //     gameType: "fourcard"
-        // },
-        // {
-        //     id: 5,
-        //     name: "2 Card Teen Patti",
-        //     gameType: "twocard"
-        // },
-        {
-            id: 6,
-            name: "Zhandu",
-            gameType: "zhandu"
-        },
-         {
-            id: 7,
-            name: "Flipper",
-            gameType: "flipper"
-        },
-         {
-            id: 8,
-            name: "Variation",
-            gameType: "variation"
-        }
-    ];
+    const totalGameList = []
+    roomList.map(x => {
+        variationList.forEach(y => {
+            totalGameList.push({
+                ...x,
+                variation: y?.name,
+                bootAmount: y?.bootAmount
+            })
+        })
+    })
+
 
     const newRooms = []
-    for (let i = 1; i <= roomList.length; i++) newRooms.push({ roomId: i, roomName: roomList[i - 1]?.name, gameType: roomList[i - 1]?.gameType })
+    for (let i = 1; i <= totalGameList.length; i++) newRooms.push({ roomId: i, roomName: totalGameList[i - 1]?.name, gameType: totalGameList[i - 1]?.gameType, variation: totalGameList[i - 1]?.variation, bootAmount: totalGameList[i - 1]?.bootAmount })
 
-        const checkRoom = await matchSchema.model.find({});
-        if (checkRoom.length === 0) {
-            await matchSchema.model.insertMany(newRooms)
-        }
-
-}
-
-module.exports.createShopItem = async () => {
-    const shopArray = [
-        {
-            itemType: "coins",
-            name: "",
-            coins: 10000,
-        },
-        {
-            itemType: "coins",
-            name: "",
-            coins: 50000,
-        },
-        {
-            itemType: "coins",
-            name: "",
-            coins: 100000,
-        },
-        {
-            itemType: "coins",
-            name: "",
-            coins: 500000,
-        },
-        {
-            itemType: "coins",
-            name: "",
-            coins: 1000000,
-        },
-        {
-            itemType: "diamond",
-            name: "Yellow Diamond",
-            coins: 1000000
-        }, {
-            itemType: "diamond",
-            name: "Blue Diamond",
-            coins: "",
-            coins: 5000000
-        },
-        {
-            itemType: "diamond",
-            name: "Red Diamond",
-            coins: "",
-            coins: 10000000
-        },
-        {
-            itemType: "gift",
-            name: "Flowers",
-            coins: 500
-        },
-        {
-            itemType: "gift",
-            name: "Juice",
-            coins: 500
-        },
-        {
-            itemType: "gift",
-            name: "Coffee",
-            coins: 500
-        },
-        {
-            itemType: "gift",
-            name: "Soda",
-            coins: 500
-        },
-        {
-            itemType: "gift",
-            name: "Water",
-            coins: 500
-        },
-        {
-            itemType: "actions",
-            name: "Throw Eggs",
-            coins: 500
-        },
-        {
-            itemType: "actions",
-            name: "Throw Tomatoes",
-            coins: 500
-        },
-        {
-            itemType: "actions",
-            name: "Water Splash",
-            coins: 500
-        },
-        {
-            itemType: "actions",
-            name: "Gun Shot",
-            coins: 500
-        },
-        {
-            itemType: "actions",
-            name: "Bomb Explosion",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 1",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 2",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 3",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 4",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 5",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 6",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 7",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 8",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 9",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 10",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 11",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 12",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 13",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 14",
-            coins: 500
-        },
-        {
-            itemType: "audio",
-            name: "Audio 15",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 1",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 2",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 3",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 4",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 5",
-            coins: 500
-        },
-        {
-            itemType: "cardSkins",
-            name: "Card Skin 6",
-            coins: 500
-        }
-    ]
-
-    const checkShopItem = await shopSchema.model.find({});
-
-    if (checkShopItem.length !== shopArray.length) {
-
-        let insertArray = []
-
-        shopArray.map(i => !checkShopItem.some(x => x.name === i.name) ? insertArray.push(i) : null)
-
-        // shopArray.map(x => {
-        //     insertArray.push({ itemType: x.itemType, name: x.name, coins: x.coins })
-        // })
-
-        shopSchema.model.insertMany(insertArray).then().catch()
+    const checkRoom = await matchSchema.model.find({});
+    if (checkRoom.length === 0) {
+        await matchSchema.model.insertMany(newRooms)
     }
+
 }

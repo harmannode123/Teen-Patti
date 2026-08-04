@@ -335,3 +335,18 @@ module.exports.purchaseSubscription = async (req, res, next) => {
         next();
     } catch (err) { return res.status(responseStatus.badRequest).send(utils.createErrorResponse(err.message)); }
 }
+
+// Game launch (aggregator) — operator se aane wale payload ki validation
+module.exports.launchValidation = async (req, res, next) => {
+    try {
+        await yup.object({
+            userId: yup.string().trim().required(),          // operator ka user id
+            userName: yup.string().trim().required(),
+            amount: yup.number().required().positive(),      // reserve amount
+            currency: yup.string().trim().optional(),
+            callbackUrl: yup.string().trim().url().optional().nullable(), // na aaye to env fallback
+            signature: yup.string().trim().optional(),       // Step 2 me required karenge
+        }).validate(req.body);
+        next();
+    } catch (err) { return res.status(responseStatus.badRequest).send({ success: false, message: err.message }); }
+}

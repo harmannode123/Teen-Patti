@@ -106,6 +106,11 @@ const matchSchema = mongoose.Schema({
         ref: "user",
         default: null
     },
+    previousWinner: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "user",
+        default: null
+    },
     roomId: {
         type: String,
         default: null
@@ -116,8 +121,13 @@ const matchSchema = mongoose.Schema({
     },
     gameType: {
         type: String,
-      //  enum: ["teenpatti", "muflis", "joker", "fourcard", "twocard", "zhandu"],
+        //  enum: ["teenpatti", "muflis", "joker", "fourcard", "twocard", "zhandu"],
         default: "teenpatti"
+    },
+    variation: {
+        type: String,
+        //  enum: ["teenpatti", "muflis", "joker", "fourcard", "twocard", "zhandu"],
+        default: "Bronze"
     },
     // Joker variant only: the card cut from the deck before dealing.
     // Its rank (cardValue) becomes the wild card for this match.
