@@ -66,6 +66,17 @@ Player ke cards ko "seen" mark karta hai (`playersData.$.isSeen = true`), cache 
 
 ---
 
+### `fetchBestHand(io, user, socketId, data = {})` — exported
+ZHANDU: client on-demand apna **current best hand** maang sakta hai. Zaroorat isliye ki joker progressive khulte hain (J1→J2→J3), to same cards ka best hand round ke beech badal jaata hai — `seenCardSuccess` sirf ek baar jaata hai. Request aur response dono ka event name **same** (`fetchBestHand`).
+
+Player ka sabse naya chal raha zhandu match (`gameType: zhandu, start: true, end: false`, `sort createdAt:-1`) → uske `playersData` se cards → `getApplicableJokerValues` (all-in ho to freeze kiye hue jokers hi) → `evaluateBestHandWithJoker`. Response me `bestHand` (resolved cards), `handName`/`handRank`, `appliedJokerCount` (is player pe kitne joker lag rahe), `openedJokerCount`, `isAllIn`, `movesRound`.
+
+Guards: match na mile → error; player `exitPlayers` me ho → error; cards distribute na hue ho → error; `isSeen` false ho → error (blind banda apne cards peek na kar le).
+
+**LOCK nahi leta** — poora handler read-only hai, koi DB write nahi. Cache (`getMatch`) se bhi nahi padhta — wo sirf `placeBetCore` ka hot path hai.
+
+---
+
 ## Side show
 
 ### `sideShow(io, user, socketId, data = {})` — exported
@@ -79,7 +90,9 @@ Side show ke response (accept/reject) ko handle karta hai.
 LOCK leta hai; `placeBetCore` ko already-held lock ke saath call karta hai.
 
 ### `startNextRound(io, matchData)` — exported
-Round khatam hone ke baad agla match doc create karta hai (roomId, gameType, roomName, previousWinner ke saath). Exit players ko filter karta hai.
+Round khatam hone ke baad agla match doc create karta hai (roomId, gameType, variation, bootAmount, previousWinner ke saath). Exit players ko filter karta hai.
+
+**Affordability filter:** agle round me seat sirf usko milti hai jiske paas **boot ka dugna** coins ho — wahi rule jo `joinRoomNew` naye player pe lagata hai. Coins **DB se fresh** padhe jaate hain, `matchData.players` ka populated snapshot round-end ke pot credit se purana hota hai. Jinke paas itne coins nahi wo `watchers` me chale jaate hain (purane watchers ke saath merge, dedupe hoke), aur unka `seatPosition` claim bhi hat jaata hai warna wo seat index kisi aur ko mil hi nahi paata. Har aise nikale gaye player ka **`selfExitSuccess` emit** bhi jaata hai (sab players + watchers ko) taaki client seat turant khali kar de — index **purane** match se, kyunki naye match me uski seat hai hi nahi.
 
 ---
 
@@ -111,6 +124,8 @@ Reconnect ke baad client current match state maang sakta hai (`resyncMatch` even
 
 ### `selfExit(io, user, socketId, disconnect = false)` — exported
 Self exit / disconnect: user ka `socketId` null karta hai aur `disconnect` par current time stamp karta hai. `socketId` filter jaan bujh ke hai — purane socket ka late disconnect naye connection ko na maare. Live match me ho to `exitPlayers` me daalta hai, na-shuru hue match se seat/player nikal deta hai. Aakhir me 5 min ka `closeSession` BullMQ job schedule karta hai.
+
+**`selfExitSuccess` emit:** match me tha to sab players + watchers ko jaata hai (seat index ke saath). Match me nahi tha (lobby se nikla) **aur `disconnect` false ho** to **sirf usi ko** jaata hai `{ _id: null, roomId: null, index: -1 }` ke saath — client screen band kar sake. `disconnect` par ye emit skip hota hai kyunki socket already ja chuka hota hai.
 
 ### `_flowCloseSession(userId)` — exported (BullMQ flow handler)
 `closeSession` job ka handler — disconnect ke 5 min baad chalta hai. Banda beech me wapas aa gaya to auth `disconnect: null` kar chuka hota hai → job no-op. Warna `sessionClosed: true` set karke us session ka pura record `gameSession` collection me archive karta hai — `_id` wahi user ka rakha jaata hai, isliye ek session ka ek hi doc banega (job dobara fire ho to overwrite, duplicate nahi). `disconnect: { $lte: cutoff }` isliye — purana job abhi-abhi disconnect hue bande ka session band na kar de. Live-match check abhi commented hai.

@@ -237,6 +237,23 @@ const matchSchema = mongoose.Schema({
     timestamps: true
 });
 
-matchSchema.index({ roomId: 1, players: 1 });
+
+// SABSE HOT: har bet pe DO baar chalti hai — placeBet/sideShow ka lock lookup aur uske
+// baad data query, dono `{ start: true, end: false, turn: userId }` se match dhoondhti hain.
+// `turn` pehle isliye ki wahi sabse selective hai (ek time ek hi match me ek banda turn pe
+// hota); start/end boolean hain, akele me kuch filter nahi karte.
+matchSchema.index({ turn: 1, start: 1, end: 1 });
+
+// Player ka "current match" nikalna — seenCard (×2), resyncMatch, selfExit, fetchBestHand,
+// sab `{ players: userId, end: false }` + `sort({ createdAt: -1 })` karte hain
+// (room = match chain, isliye hamesha newest chahiye).
+// `end` andar isliye ki wo HAR player-query me hai -> Mongo seedha (user, end:false) block
+// pe jump karta hai; banda kisi match me na ho to wo block khali = turant jawab, uski poori
+// match history walk nahi karni padti (disconnect storm me yahi bachata hai).
+// `start` jaan bujh ke NAHI: wo sirf kuch queries me aata hai, aur beech me hone se baaki
+// queries ke liye `createdAt` sort index se nahi ho paata -> memory sort wapas aa jaata.
+// `createdAt: -1` isliye taaki sort bhi index se ho.
+// `players` array hai par compound me sirf yahi array field hai -> multikey allowed.
+matchSchema.index({ players: 1, end: 1, createdAt: -1 });
 
 module.exports.model = mongoose.model("match", matchSchema);

@@ -115,10 +115,10 @@ module.exports.startMatch = async (io, matchData) => {
 
 
         let jokerCard = null
-        if (startMatch?.gameType === "joker") jokerCard = cards.pop()
+        if (startMatch?.gameType === gameTypeConstant?.JOKER) jokerCard = cards.pop()
 
         let jokerCards = []
-        if (startMatch?.gameType === "zhandu") {
+        if (startMatch?.gameType === gameTypeConstant?.ZHANDU) {
             for (let i = 0; i < (zhanduConfig?.jokerCount || 3); i++) {
                 jokerCards.push({ card: cards.pop(), opened: i === 0 })
             }
@@ -254,8 +254,6 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
             matchId ? getMatch(matchId, { populate: true }) : null
         ])
 
-
-
         // Cache se aaya doc -> turn ab khud validate karo (pehle query filter {turn} karta tha).
         if (!matchData || !userData || matchData.end || !matchData.start || String(matchData.turn) !== String(userId)) {
             return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Not your turn." });
@@ -264,7 +262,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
         let currentBet =Number(betAmount) > Number(matchData?.currentBetAmount) ? Number(betAmount) : matchData?.currentBetAmount
         isPacked = isPacked || false
-        const isZhandu = matchData?.gameType === "zhandu"
+        const isZhandu = matchData?.gameType === gameTypeConstant?.ZHANDU
 
         //ADD VALIDATION FOR RAISE BET
         amount = isRaisebet ? Number(currentBet) * 2 : Number(currentBet)
@@ -331,7 +329,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         // Sirf tab jab 2+ active players bache hon (warna game waise hi khatam ho raha).
         let openedJoker = null
         let zhanduUpdate = {}
-        if (matchData?.gameType === "zhandu") {
+        if (matchData?.gameType === gameTypeConstant?.ZHANDU) {
             const stillActive = matchData.playersData.filter(x => !x?.isPacked)
             if (stillActive.length >= 2 && isZhanduRoundComplete(matchData, userId)) {
                 const round = (matchData.movesRound || 0) + 1
@@ -381,7 +379,8 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
 
         matchData.players.forEach((player) => {
-            emitToUser(io, player?._id, socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin, selfBet });
+            const data = {_id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin:selfCoin, selfBet}
+            emitToUser(io, player?._id, socketEmit.successPlaceBet, data);
         });
 
 
@@ -550,7 +549,7 @@ module.exports.seenCard = async (io, user, socketId, data) => {
         // hand ke resolved CARDS ka array bhejo (frontend sirf cards dikhata). All-in ho to
         // uske applicable jokers hi lagenge (getApplicableJokerValues), warna saare khule.
         let bestHand = []
-        if (matchData?.gameType === "zhandu" && Array.isArray(cards) && cards.length) {
+        if (matchData?.gameType === gameTypeConstant?.ZHANDU && Array.isArray(cards) && cards.length) {
             const selfData = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
             const jokerVals = getApplicableJokerValues(matchData, selfData)
             bestHand = evaluateBestHandWithJoker(cards, jokerVals)?.usedCards
@@ -566,6 +565,50 @@ module.exports.seenCard = async (io, user, socketId, data) => {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
     } finally {
         if (lockMatchId && lockToken) await releaseLock(lockMatchId, lockToken);
+    }
+
+}
+
+module.exports.fetchBestHand = async (io, user, socketId, data = {}) => {
+
+    try {
+
+        const userId = user?._id
+        const matchData = await matchSchema.model
+            .findOne({ players: userId, gameType: gameTypeConstant?.ZHANDU, start: true, end: false })
+            .sort({ createdAt: -1 })
+            .lean()
+
+        if (!matchData) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "No active zhandu match found." });
+
+        const hasExited = (matchData?.exitPlayers || []).some(x => String(x) === String(userId))
+        if (hasExited) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "You have exited this match." });
+
+        const selfData = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
+        const cards = selfData?.cards
+
+        if (!selfData || !Array.isArray(cards) || !cards.length) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Cards are not distributed yet." });
+
+        if (!selfData?.isSeen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Please see your cards first." });
+
+        const jokerValues = getApplicableJokerValues(matchData, selfData)
+
+        // Jokers khaali ho (theoretically J1 hamesha khula hota) to ye normal best hand de dega.
+        const best = evaluateBestHandWithJoker(cards, jokerValues)
+
+        return emitToUser(io, userId, socketEmit.fetchBestHand, {
+            _id: matchData?._id,
+            roomId: matchData?.roomId,
+            userId,
+            index: checkIndex(matchData, userId),
+            bestHand: best?.usedCards || [],
+            handName: best?.name || null,
+            handRank: best?.rank ?? null,
+        });
+
+    } catch (error) {
+        console.log(error);
+        return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
     }
 
 }
@@ -614,7 +657,7 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             // ZHANDU Section 6: side show tabhi allowed jab —
             //   (a) teeno joker khul chuke ho, AUR
             //   (b) requester (userId) ne kam se kam 1 SEEN move kiya ho.
-            if (matchData?.gameType === "zhandu") {
+            if (matchData?.gameType == gameTypeConstant?.ZHANDU) {
                 const allJokersOpen = (matchData?.jokerCards?.length || 0) > 0 && matchData.jokerCards.every(j => j?.opened)
                 if (!allJokersOpen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Side show allowed only after all 3 jokers are opened." });
 
@@ -652,7 +695,7 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             // uske RIGHT (chhota index) hota -> agla band joker KHULEGA (dono pe apply).
             // Warna (requester chhota index) target = button (left) -> band. Sirf agla ek joker.
             let showOpenedJoker = null
-            if (matchData?.gameType === "zhandu") {
+            if (matchData?.gameType == gameTypeConstant?.ZHANDU) {
                 const sortedActive = [...totalActivePlayers].sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
                 const requesterIsButton = String(sortedActive[sortedActive.length - 1]?.playerId) === String(userId)
                 const nextClosedIdx = (matchData?.jokerCards || []).findIndex(j => !j?.opened)
@@ -680,7 +723,7 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             let splitAmong = null   // ZHANDU draw: in players me pot equally banta
             if (String(winner) === "DRAW") {
                 isDraw = true
-                if (matchData?.gameType === "zhandu") {
+                if (matchData?.gameType == gameTypeConstant?.ZHANDU) {
                     // ZHANDU (PDF Section 8): Show tie -> koi winner nahi, pot dono active
                     // players me EQUALLY split. winner field null (draw:true set karenge).
                     winnerId = null
@@ -739,7 +782,7 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
         let userId = user?._id
 
-        console.log("::::::::::::::::::! accept ", data)
+        console.log("::::::::::::::::::! accept side show request::::::! ", data)
 
         // --- LOCK: pehle sideshow wale match ka _id dhoondo, phir taala lo ---
         // (placeBet ka taala isi match ke liye respondToSideShow ke andar dobara
@@ -789,7 +832,8 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
             const resolvedWinnerId = String(looserId) === String(userId) ? otherPlayerId : userId
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.sideShowWinner, { _id: matchData?._id, player1, player2, winnerId: resolvedWinnerId, looserId, isDraw: String(winner) === "DRAW" });
+              const data= p1Np2Id.includes(String(player?._id)) ?{ player1, player2}:{}
+              emitToUser(io, player?._id, socketEmit.sideShowWinner, { ...data,_id: matchData?._id, winnerId: resolvedWinnerId, looserId, isDraw: String(winner) === "DRAW" })
             });
 
             let nextPlayerTurnId = turnManager(matchData?.playersData, otherPlayerId,)
@@ -864,14 +908,42 @@ module.exports.startNextRound = async (io, matchData) => {
             if (x?._id && !exitPlayers.includes(String(x?._id))) return String(x?._id)
         })
 
+        // Agle round me sirf wahi baithega jiske paas boot ka DUGNA coins ho (joinRoomNew wala
+        // hi rule). Coins DB se fresh — matchData ka snapshot pot credit se pehle ka hai.
+        const minCoins = (matchData?.bootAmount || 0) * 2
+        const coinsList = await userSchema.model.find({ _id: { $in: players.map(x => x?._id) } }).select("_id coins").lean()
+        const coinsMap = new Map(coinsList.map(u => [String(u?._id), u?.coins || 0]))
+
+        // Jinke paas coins nahi wo watcher ban jaayenge.
+        const brokePlayers = players.filter(x => (coinsMap.get(String(x?._id)) || 0) < minCoins)
+        players = players.filter(x => (coinsMap.get(String(x?._id)) || 0) >= minCoins)
+
+        // Seat bhi chhod do, warna broke player ka seat blocked padha rehta hai.
+        const seatedIds = players.map(x => String(x?._id))
+
         let seatPosition = matchData.seatPosition.filter(x => {
             //We can change this in  future only new player save the player array
-            if (x?.playerId && !exitPlayers.includes(String(x?.playerId))) return x
+            if (x?.playerId && !exitPlayers.includes(String(x?.playerId)) && seatedIds.includes(String(x?.playerId))) return x
+        })
+
+        // Purane watchers + naye broke players (dedupe).
+        const watchers = [...new Set([
+            ...(matchData?.watchers || []).map(x => String(x?._id || x)),
+            ...brokePlayers.map(x => String(x?._id)),
+        ])]
+
+        // Jisko coins ki wajah se bahar nikala uska selfExit emit bhi bhejo — warna client
+        // agle matchStart (30s) tak use seat pe hi dikhata rehta. Index PURANE match se lo,
+        // naye match me uski seat hai hi nahi.
+        brokePlayers.forEach((x) => {
+            const payload = { _id: matchData?._id, roomId: matchData?.roomId, userId: x?._id, index: checkIndex(matchData, x?._id) }
+            matchData.players.forEach((player) => emitToUser(io, player?._id, socketEmit.selfExitSuccess, payload))
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.selfExitSuccess, payload)
         })
 
 
         let [newMatch] = await Promise.all([
-            matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers: matchData?.watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner})
+            matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount})
         ])
         newMatch = newMatch.toObject()
 
@@ -879,7 +951,7 @@ module.exports.startNextRound = async (io, matchData) => {
         await scheduleFlow("startNext", { matchId: String(newMatch?._id) }, 30000)
 
         // let [newMatch] = await Promise.all([
-        //     matchSchema.model.create({ roomId: matchData?.roomId, gameType: matchData?.gameType, roomName: matchData?.roomName, previousWinner: matchData?.winner })
+        //     matchSchema.model.create({ roomId: matchData?.roomId, gameType: matchData?.gameType, roomName: matchData?.roomName, previousWinner: matchData?.winner ,variation:matchData?.variation})
         // ])
 
     } catch (error) {
@@ -917,7 +989,7 @@ module.exports._flowDealCards = async (io, matchId) => {
         console.log(":::::::betTurnDelay+++++++++++:::::::",betTurnDelay)
         // ZHANDU: J1 (first joker) ka jokerOpened emit betTurn se 2s PEHLE bhejo, taaki client
         // turn shuru hone se pehle joker khulta dikha sake. (J2/J3 to placeBet me khulte hi hain.)
-        if (match?.gameType === "zhandu") {
+        if (match?.gameType == gameTypeConstant?.ZHANDU) {
             await scheduleFlow("firstJoker", { matchId: String(match?._id) }, Math.max(0, betTurnDelay - 2000))
         }
 
@@ -1001,13 +1073,22 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
 
 
 module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
-    console.log(":::: Self Exit :::: ",user?.name);
+    console.log(":::: Self Exit :::: ",user?.name,user?._id,disconnect);
 
     // socketId filter jaan bujh ke: purane socket ka late disconnect naye connection ko na maare.
-    const checkUser= await  userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null, disconnect: moment.utc().toDate() })
+    const checkUser= disconnect?await userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null, disconnect: moment.utc().toDate() }):await userSchema.model.findOne({ _id: user?._id, socketId })
+
+    if(!checkUser) return
+    const currentMatch = await matchSchema.model.findOne({ players: user?._id, end: false })
+        .sort({ createdAt: -1 })
+        .populate('players', '_id name socketId coins')
+        .populate('watchers', '_id name socketId coins')
+        .lean()
+
+    const exitIndex = currentMatch ? checkIndex(currentMatch, user?._id) : -1
 
     if(checkUser){
-        await Promise.all([
+        await Promise.all([            
         matchSchema.model.updateMany({ players: user?._id, start: true, end: false }, {
             $addToSet: { exitPlayers: user?._id },
         }),
@@ -1016,11 +1097,34 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
         }),
          matchSchema.model.updateMany({ previousWinner: user?._id, start: false, end: false }, {
             previousWinner:null
-        })
+        }),
+        matchSchema.model.updateMany({ watchers: user?._id }, {
+            $pull: { watchers: user?._id },
+        }),
     ])
 
         // 5 min baad dekhenge — tab tak wapas nahi aaya to session close.
-        await scheduleFlow("closeSession", { userId: String(user?._id) }, SESSION_CLOSE_MS)
+       // await scheduleFlow("closeSession", { userId: String(user?._id) }, SESSION_CLOSE_MS)
+    }
+
+    if (currentMatch) {
+
+        const payload = {
+            _id: currentMatch?._id,
+            roomId: currentMatch?.roomId,
+            userId: user?._id,
+            index: exitIndex,
+        }
+
+        currentMatch.players.forEach((player) => {
+            payload.selfUser = String(player?._id) === String(checkUser?._id)
+            emitToUser(io, player?._id, socketEmit.selfExitSuccess, payload)
+        })
+
+        this.sendCommonEmitForWatcher(io, currentMatch, socketEmit.selfExitSuccess, payload)
+    }
+    else if(!disconnect){
+        emitToUser(io, user?._id, socketEmit.selfExitSuccess, { _id: "_", roomId: "_", userId: user?._id, index: -1,selfUser:true })
     }
 
     return;
@@ -1104,7 +1208,7 @@ module.exports.roomList = async (io, user, socketId, data = {}) => {
 
 
 module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
-    console.log(":::: roomList::::::::::::rommList :::: ");
+    console.log(":::: roomList::::::::::::rommList :::: ",data);
     try{
 
         const {gameType } = data
@@ -1148,6 +1252,8 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
             }
         }
     ])
+    console.log(":::: roomList::::::::::::rommList :::: ",list);
+
 
     return io.to(socketId).emit(socketEmit.fetchLobbyList, { message: "Fetch Room List success", list });
     }
@@ -1285,7 +1391,7 @@ module.exports.sendCommonEmit = (io, matchData, emit) => {
         }
 
         matchData?.players.map((x) => {
-            emitToUser(io, x?._id, emit, { ...payload, selfId: x?._id })
+            emitToUser(io, x?._id, emit, { ...payload, selfId: x?._id,selfCoin: x?.coins })
         })
 
     } catch (error) {

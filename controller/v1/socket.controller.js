@@ -31,6 +31,10 @@ module.exports.socketController = (io) => {
 
         socket.on(socketEmit.seenCard, async (data) => gameplayController.seenCard(io, user, socketId, data));
 
+        // ZHANDU: joker khulte rehte hain to best hand badalta rehta hai — client
+        // jab chahe apna current best hand maang sakta hai (response bhi isi event pe).
+        socket.on(socketEmit.fetchBestHand, async (data) => gameplayController.fetchBestHand(io, user, socketId, data));
+
         socket.on(socketEmit.sideShow, async (data) => gameplayController.sideShow(io, user, socketId, data));
 
         socket.on(socketEmit.respondToSideShow, async (data) => gameplayController.respondToSideShow(io, user, socketId, data));
@@ -45,5 +49,7 @@ module.exports.socketController = (io) => {
 
         // Disconnection
         socket.on(socketEmit.disconnect, async () => gameplayController.selfExit(io, user, socketId, true));
+        socket.on(socketEmit.selfExit, async () => gameplayController.selfExit(io, user, socketId, false));
+
     });
 };

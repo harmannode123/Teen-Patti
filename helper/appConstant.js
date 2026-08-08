@@ -61,6 +61,10 @@ module.exports.socketEmit = {
 
     // ZHANDU: jab koi joker (J1/J2/J3) khulta hai to sab players/watchers ko emit.
     jokerOpened: "jokerOpened",
+
+    // ZHANDU: client on-demand apna current best hand maang sakta hai (request + response
+    // dono ka naam same hai — client isi event pe bhejta hai, isi pe sunta hai).
+    fetchBestHand: "fetchBestHand",
     gameList: "gameList",
 
 }
@@ -187,6 +191,13 @@ module.exports.gameTypeConstant = {
     FOUR_CARD: "fourcard",
     TWO_CARD: "twocard",
     ZHANDU: "zhandu"
+}
+
+// Operator ko jaane wale callback ka type. Operator isi se pehchanta hai ki
+// ye session shuru hone ka info hai ya session ka final result.
+module.exports.callbackType = {
+    LAUNCH: "launch",
+    RESULT: "result"
 }
 
 // ZHANDU: kitne joker deck se cut hote hain (center cards) — 3.

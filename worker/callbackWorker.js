@@ -7,6 +7,7 @@ const moment = require("moment");
 
 const gameSessionSchema = require("../model/gameSession.model");
 const { acquireLock, releaseLock } = require("../helper/lock.helper");
+const { callbackType } = require("../helper/appConstant");
 
 const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
@@ -53,6 +54,7 @@ const runCallbackSweep = async () => {
         for (const session of rows) {
 
             const payload = {
+                type: callbackType.RESULT,
                 sessionId: String(session._id),
                 userId: session.userId,
                 initialAmount: session.startAmount || 0,

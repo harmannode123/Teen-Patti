@@ -143,6 +143,7 @@ Paisa kahan katega (sab local, zero network call bet ke time pe):
   - `gameUrl` (`GAME_BASE_URL?token=...&gameType=...`) return
   - ⚠️ signature verify abhi TODO (Step 2 me aayega)
   - [x] **duplicate session check** — `findOne({ userId, sessionClosed: false })`, mila to **409 `"Session already active for this user."`**. Ek userId ka ek hi active session, warna operator do baar launch karke ek hi paise se do jagah balance bana leta
+    - [x] **DB-level guard bhi hai** — `user.model.js` me partial unique index `{ userId: 1 }` + `partialFilterExpression: { sessionClosed: false }`. Sirf `findOne` check race-prone tha: do launch request saath me aayein to dono ka check pass ho jaata (dono ko active session nahi milta) aur do session ban jaate = ek hi paise pe do balance. Index dusre `create` ko reject karta hai; `launch()` `error.code === 11000` ko pakad ke wahi **409** return karta hai (500 nahi). Partial isliye ki settle ho chuke (`sessionClosed: true`) session pade rehte hain — ek user kai baar khel sakta hai.
     - ⚠️ Reject wala model chuna hai, matlab **Step 11.5 (expiry sweeper) ab zaroori hai** — tab band karke gaya user tab tak dobara launch nahi kar payega jab tak purana session settle na ho jaye
     - `sessionClosed` ab `create()` me explicitly nahi ja raha — user model ka `default: false` load-bearing hai, use mat badalna
   - ⚠️ **`sessionToken` me poora `gameUrl` store hota hai**, token nahi. Step 8 me auth ise match nahi karta (sirf JWT verify + `_id`/`userId` lookup) — isliye abhi kaam chal raha hai. Agar kabhi token revoke karna ho (session close pe `sessionToken: null`) to pehle ye theek karna padega.
@@ -222,6 +223,16 @@ Paisa kahan katega (sab local, zero network call bet ke time pe):
 1. Launch pe apne side pe **debit + lock** karo, hamara `success` aane ke baad hi game kholo — double-spend yahin rukta hai
 2. Callback ka response **exactly** ye ho: HTTP `200` + `{ "success": true, "message": "success" }` (case-sensitive)
 3. `sessionId` pe **idempotency** — ek hi sessionId 5 baar tak aa sakta hai, dobara aaye to ignore karo
+4. Callback me ab **`type`** field aata hai (`appConstant.callbackType`) — operator isi se route kare:
+
+| `type` | kab | kahan se | payload | retry |
+|---|---|---|---|---|
+| `launch` | session shuru hote hi, `gameUrl` dene se **pehle** | `user.controller.js → launch()` (**blocking**) | `{ type, sessionId, userId, initialAmount }` | ❌ nahi — 1 hi attempt (3s timeout) |
+| `result` | session settle hone ke baad | `worker/callbackWorker.js` (sweep) | `{ type, sessionId, userId, initialAmount, finalAmount, netResult }` | ✅ 5 attempts, 5 min gap |
+
+`sessionId` dono me **same** hota hai (= `gameSession._id` = user `_id`) — operator `launch` pe row bana ke `result` pe usi ko close kar sakta hai.
+
+⚠️ **`launch` callback ka jawab game khulne ka gate hai.** Operator ne `200 + {success:true, message:"success"}` nahi diya (ya 3s me jawab nahi aaya) to hum session doc **delete** kar dete hain aur `400 "Launch rejected by operator."` return karte hain — koi `gameUrl` nahi. Delete isliye ki `sessionClosed:false` wala doc pada rehta to us user ka agla launch Step 5 ke `409` se block ho jaata.
 
 ---
 
