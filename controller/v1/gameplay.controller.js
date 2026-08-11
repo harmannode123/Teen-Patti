@@ -19,6 +19,13 @@ global.dashCallTimeouts = {};
 // warna close. Refresh/network drop bhi disconnect hi hota hai — isliye turant band nahi karte.
 const SESSION_CLOSE_MS = 5 * 60 * 1000;   // 5 min
 
+// Round khatam hone se agla round shuru hone tak ka gap. Ye EK hi jagah define hai —
+// `startNextRound` isi se BullMQ job schedule karta hai AUR `roundWinner` payload me
+// `nextRoundIn` bhej deta hai, taaki client apna hardcoded countdown na chalaye
+// (pehle client ka timer server se alag tha -> match "jaldi" start hota dikhta tha).
+const NEXT_ROUND_MS = 10000;              // 10s
+const NEXT_ROUND_SEC = NEXT_ROUND_MS / 1000;
+
 
 function shuffle(deck) {
     const copy = [...deck];
@@ -97,6 +104,7 @@ module.exports.startMatch = async (io, matchData) => {
             bootAmount = bootAmount + startMatch?.bootAmount
         })
 
+        console.log(`[nextRound] matchStart EMIT room=${startMatch?.roomId} match=${startMatch?._id} @${new Date().toISOString()}`)
         this.sendCommonEmit(io, startMatch, socketEmit.matchStart)
         this.sendCommonEmitForWatcher(io, startMatch, socketEmit.matchStart)
 
@@ -161,12 +169,18 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData) => {
         const otherPlayerForSideShow = sideShowTurnManager(matchData?.playersData, currentPlayerTurnId)
 
         showEnable = totalActivePlayers.length == 2 || otherPlayerForSideShow?.isSeen ? true : false
+        const exitPlayers = matchData?.exitPlayers?.map(x => String(x)).includes(String(currentPlayerTurnId))
 
         matchData.players.forEach((player) => {
-            emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
+            if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
         });
 
-        module.exports.sendCommonEmitForWatcher(io, matchData, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable })
+           matchData.watchers.forEach((player) => {
+            if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable });
+        });
+      //  module.exports.sendCommonEmitForWatcher(io, matchData, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, showEnable: showEnable })
 
 
         // 30s turn timer — ab BullMQ (Redis) delayed job se. Cluster-safe + crash-safe.
@@ -214,9 +228,9 @@ const resolveShowdown = async (io, matchData) => {
 
 
     matchData.players.forEach(player => {
-        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex })
+        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
     })
-    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex })
+    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
     await cancelAutoPack(matchData?._id)
     matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { end: true, winner: mainWinner, pots: potResults }, { new: true }).populate('players', 'name socketId coins').lean()
@@ -423,10 +437,10 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
             console.log("::::::::::::::::::player1:::::", player1,)
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex });
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC });
             });
 
-            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex })
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
 
             matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
@@ -737,17 +751,26 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
 
             const previousWinnerSeatIndex = previousWinnerIndex(matchData, matchData?.previousWinner)
 
-           await setTimeout(()=>{
-                matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex });
-            });
-            },2000)
-
-          
-
-
             await cancelAutoPack(matchData?._id);
-            await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, { winner: winnerId, end: true, ...(splitAmong ? { draw: true } : {}), ...(showOpenedJoker ? { jokerCards: matchData.jokerCards, movesRound: matchData.movesRound } : {}) }, { new: true }).populate('players', 'name socketId coins').lean()
+
+            // GUARD: `end: false` zaroori hai (baaki dono round-end paths me pehle se hai).
+            // Iske bina late/duplicate show response already-ended match ko dobara end karta,
+            // pot DOBARA credit hota, aur `startNextRound` dobara chal ke usi roomId ke liye
+            // ek aur match + ek aur `startNext` job bana deta -> do matchStart, round jaldi
+            // restart hota dikhta. Null aaya matlab round pehle hi khatam -> chup-chaap return.
+            const endedMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: winnerId, end: true, ...(splitAmong ? { draw: true } : {}), ...(showOpenedJoker ? { jokerCards: matchData.jokerCards, movesRound: matchData.movesRound } : {}) }, { new: true }).populate('players', 'name socketId coins').lean()
+            if (!endedMatch) return
+
+            // Winner emit AB hota hai — `end: true` ke turant baad, kyunki NEXT_ROUND_MS ka
+            // countdown yahin se chalta hai. Pehle yahan `await setTimeout(cb, 2000)` tha:
+            // wo Node ka global setTimeout hai (timers/promises wala nahi), to `await` ka koi
+            // asar nahi hota tha — server turant aage badh jaata aur emit 2s late jaata.
+            // Nateeja: players ko winner sirf 8s dikhta tha aur round jaldi start lagta tha.
+            matchData.players.forEach((player) => {
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC });
+            });
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
+
             // Payout: ZHANDU draw -> pot equally split; warna winner ko pura pot.
             if (splitAmong) await splitPotEqually(splitAmong, matchData?.pot)
             else await creditWinnerPot(winnerId, matchData?.pot)
@@ -947,8 +970,10 @@ module.exports.startNextRound = async (io, matchData) => {
         ])
         newMatch = newMatch.toObject()
 
-        // 5s baad agla round shuru — BullMQ flow job (reload-safe; pehle setTimeout tha).
-        await scheduleFlow("startNext", { matchId: String(newMatch?._id) }, 30000)
+        // NEXT_ROUND_MS baad agla round shuru — BullMQ flow job (reload-safe; pehle setTimeout tha).
+        await scheduleFlow("startNext", { matchId: String(newMatch?._id) }, NEXT_ROUND_MS)
+        // Gap verify karne ke liye — ye log aur `_flowStartNext` ka log NEXT_ROUND_MS door hone chahiye.
+        console.log(`[nextRound] room=${matchData?.roomId} scheduled match=${newMatch?._id} in ${NEXT_ROUND_MS}ms @${new Date().toISOString()}`)
 
         // let [newMatch] = await Promise.all([
         //     matchSchema.model.create({ roomId: matchData?.roomId, gameType: matchData?.gameType, roomName: matchData?.roomName, previousWinner: matchData?.winner ,variation:matchData?.variation})
@@ -1023,6 +1048,7 @@ module.exports._flowFirstJoker = async (io, matchId) => {
 module.exports._flowStartNext = async (io, matchId) => {
     try {
         const updateMatch = await matchSchema.model.findOneAndUpdate({ _id: matchId }, { waitForNextRount: false }).lean()
+        console.log(`[nextRound] fired match=${matchId} @${new Date().toISOString()}`)
         if (updateMatch && updateMatch.players.length >= gameConfig?.minPlayer) module.exports.startMatch(io, updateMatch)
     } catch (e) {
         console.log("_flowStartNext error =>", e.message)
@@ -1213,9 +1239,17 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
 
         const {gameType } = data
 
+    // `socket.user` handshake ke waqt ka lean snapshot hai — connect ke baad jitne
+    // bet/win hue unse uske `coins` update NAHI hote. Isliye lobby me purana balance
+    // dikh raha tha. Har fetch pe DB se fresh coins padho taaki real-time rahe.
+    const freshUser = user?._id
+        ? await userSchema.model.findOne({ _id: user._id }).select("coins").lean()
+        : null;
+    const selfCoin = freshUser?.coins ?? user?.coins ?? 0;
 
-    if(!gameType) return io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList });
-    
+
+    if(!gameType) return io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList, selfCoin });
+
 
     if (!Object.values(gameTypeConstant).includes(gameType)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Invalid game type." });
 
@@ -1255,7 +1289,7 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
     console.log(":::: roomList::::::::::::rommList :::: ",list);
 
 
-    return io.to(socketId).emit(socketEmit.fetchLobbyList, { message: "Fetch Room List success", list });
+    return io.to(socketId).emit(socketEmit.fetchLobbyList, { message: "Fetch Room List success", list, selfCoin });
     }
     catch (error) { 
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });    
@@ -1275,6 +1309,7 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
 
         const matchData = await matchSchema.model.findOneAndUpdate({ roomId }, { $addToSet: { watchers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean()
 
+        if(!matchData ) return io.to(socketId).emit(socketEmit.errorLog, { message: "Invalid match id ." });
         // watcher add hua -> cache invalidate (cached watchers refresh ho).
         await deleteMatch(matchData?._id)
 
@@ -1289,8 +1324,12 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
             players: matchData?.players,
             timer: 10,
             roomId: matchData?.roomId,
-            previousWinnerSeatIndex : previousWinnerIndex(matchData, matchData?.previousWinner)
+            previousWinnerSeatIndex : previousWinnerIndex(matchData, matchData?.previousWinner),
+            gameType:matchData?.gameType,
+            jokerCards: matchData?.jokerCards.filter(x => x?.opened)?.map(x => x.card)
         }
+
+        console.log(":::::::::::::::::::>>.watchy room ::::::::::",payload?.jokerCards)
 
 
         io.to(socketId).emit(socketEmit.watchRoom, { message: "Fetch Room List success", ...payload });

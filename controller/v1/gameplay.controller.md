@@ -138,7 +138,10 @@ Self exit / disconnect: user ka `socketId` null karta hai aur `disconnect` par c
 Active (non-ended) matches ki list — har room ke `totalActivePlayers` (players − exitPlayers), roomId, start, end ke saath aggregate karke `fetchRoomList` emit karta hai.
 
 ### `fetchLobbyList(io, user, socketId, data = {})` — exported
-`gameType` ke hisaab se lobby list. `gameType` na ho to poori `roomList` (constant) bhejta hai; invalid gameType par error; warna us gameType ke matches ka aggregate (activePlayers, watchers, entryCoins, roomName, variation, bootAmount) `fetchLobbyList` emit karta hai.
+`gameType` ke hisaab se lobby list. `gameType` na ho to poori `roomList` (constant) bhejta hai; invalid gameType par error; warna us gameType ke matches ka aggregate (activePlayers, watchers, entryCoins, roomName, variation, bootAmount) `fetchLobbyList` emit karta hai. `selfCoin` dono emits me jaata hai aur **DB se fresh padha jaata hai** (`socket.user` handshake-time snapshot hai, uske coins stale hote hain).
+
+### Round-gap constant — `NEXT_ROUND_MS` (file ke top pe)
+Round end se agla round start hone tak ka gap (abhi 10s). `startNextRound` isi se `startNext` BullMQ job schedule karta hai, aur teeno round-end paths ka `roundWinner` payload isi ka second-value `nextRoundIn` bhejta hai — client apna hardcoded countdown na chalaye. Value badalni ho to sirf yahi constant badlo.
 
 ### `watchRoom(io, user, socketId, data = {})` — exported
 User ko room ka watcher banata hai (`$addToSet: watchers`), cache invalidate, aur match ka current state (`turn`, players+index, roomId) `watchRoom` emit karta hai.

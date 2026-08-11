@@ -20,8 +20,16 @@ const server = http.createServer(app);
 const v1Routes = require('./route/v1/index.route');
 const { socketController } = require('./controller/v1/socket.controller');
 const io = require('socket.io')(server, {
-    // Allow browser/cross-origin clients to connect
-    cors: { origin: '*', methods: ['GET', 'POST'] }
+    // Allow browser/cross-origin clients to connect.
+    // `allowedHeaders` zaroori hai: WebGL client `extraHeaders: { authorization }` bhejta hai,
+    // aur custom header pe browser pehle preflight OPTIONS maarta hai. Response me ye header
+    // allow na ho to browser poori request BLOCK kar deta hai -> connect_error, server pe
+    // koi log bhi nahi aata. Native C# client me ye problem hoti hi nahi (CORS sirf browser ka hai).
+    cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+        allowedHeaders: ['authorization', 'language', 'Content-Type']
+    }
 });
 
 // --- Socket.IO Redis Adapter (cluster-ready) -----------------------------
