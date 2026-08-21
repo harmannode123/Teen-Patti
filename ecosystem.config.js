@@ -27,10 +27,10 @@ module.exports = {
             name: "teenpatti",
             script: "app.js",
 
-            // Is machine me 4 PHYSICAL cores hain (8 logical/HT). 4 instances rakhe —
-            // "max" (=8) is weak CPU pe oversubscribe karta tha (zyada context-switch).
-            // Proper server pe is number ko us machine ke physical cores ke barabar karo.
-            instances: 4,
+            // Is machine me 2 cores hain isliye 2 instances. "max" mat karna —
+            // HT/logical cores pe oversubscribe hota hai (zyada context-switch).
+            // Naye server pe is number ko us machine ke physical cores ke barabar karo.
+            instances: 2,
             exec_mode: "cluster",
 
             autorestart: true,
@@ -40,10 +40,10 @@ module.exports = {
             min_uptime: "10s",
             max_restarts: 10,
 
+            // Sirf EK env hai — ye server hamesha production hi chalta hai.
+            // Isliye `pm2 start ecosystem.config.js` seedha kaafi hai, koi
+            // `--env production` flag nahi chahiye.
             env: {
-                NODE_ENV: "development",
-            },
-            env_production: {
                 NODE_ENV: "production",
             },
         },

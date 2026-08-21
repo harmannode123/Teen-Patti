@@ -15,7 +15,7 @@ const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 connection.on("error", (err) => console.log("settlement redis error =>", err.message));
 
 const QUEUE_NAME = "settlement";
-const SWEEP_MS = 60 * 1000;      // har 1 min
+const SWEEP_MS = 60 * 1000;      // har 10 sec — result callback jaldi pahunchana hai
 const LOCK_KEY = "settlement";
 const LOCK_TTL_MS = 60 * 1000;   // sweep atak jaye to bhi taala apne aap khul jaye
 
@@ -30,7 +30,7 @@ const runSettlementSweep = async () => {
 
     try {
         const rows = await userSchema.model.aggregate([
-            { $match: { sessionClosed: true } },
+            { $match: { sessionActive:true,sessionClosed: true } },
             {
                 $lookup: {
                     from: "matches",
@@ -60,6 +60,7 @@ const runSettlementSweep = async () => {
                     finalCoins: u.coins || 0,
                     netResult: (u.coins || 0) - (u.amount || 0),
                     settlement: true,
+                    startAmount:u?.amount
                 },
                 upsert: true,
             }
@@ -90,6 +91,14 @@ const startSettlementWorker = async () => {
 
     worker.on("error", (err) => console.log("settlement-worker error =>", err.message));
     worker.on("failed", (job, err) => console.log("settlement-worker job failed =>", job?.id, err?.message));
+
+    // SWEEP_MS badalne se purana schedule Redis me chipka rehta hai aur wo BHI firing
+    // karta rehta hai (repeat key me interval baked hai -> naya interval = nayi key).
+    // Isliye add se pehle mismatched intervals wale schedules hata do.
+    const existingRepeats = await settlementQueue.getRepeatableJobs();
+    for (const job of existingRepeats) {
+        if (Number(job.every) !== SWEEP_MS) await settlementQueue.removeRepeatableByKey(job.key);
+    }
 
     // Repeatable job. Saare instances yahi add karte hain par Redis repeat key se dedupe
     // ho jaata hai -> ek hi schedule banti hai.

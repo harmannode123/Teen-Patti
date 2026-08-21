@@ -342,10 +342,22 @@ module.exports.launchValidation = async (req, res, next) => {
         await yup.object({
             userId: yup.string().trim().required(),          // operator ka user id
             userName: yup.string().trim().required(),
-            amount: yup.number().required().positive(),      // reserve amount
+            amount: yup.number().required().min(0),      // reserve amount
             currency: yup.string().trim().optional(),
-            callbackUrl: yup.string().trim().url().optional().nullable(), // na aaye to env fallback
+            callbackUrl: yup.string().trim().url().required(), // na aaye to env fallback
             signature: yup.string().trim().optional(),       // Step 2 me required karenge
+        }).validate(req.body);
+        next();
+    } catch (err) { return res.status(responseStatus.badRequest).send({ success: false, message: err.message }); }
+}
+
+// Game history — operator ke userId se uske sessions ki match history nikalne ke liye
+module.exports.gameHistoryValidation = async (req, res, next) => {
+    try {
+        await yup.object({
+            userId: yup.string().trim().required(),               // operator ka user id
+            limit: yup.number().integer().min(1).max(100).optional(),  // ek page me kitne matches (default 10)
+            offset: yup.number().integer().min(0).optional(),          // kitne skip karne hain (default 0)
         }).validate(req.body);
         next();
     } catch (err) { return res.status(responseStatus.badRequest).send({ success: false, message: err.message }); }

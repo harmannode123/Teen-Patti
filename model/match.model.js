@@ -178,6 +178,14 @@ const matchSchema = mongoose.Schema({
         type: Number,
         default: 0
     },
+    entryAmount:{
+        type: Number,
+        default: 0
+    },
+    betLimit:{
+        type: Number,
+        default: 0
+    },
     sideShow: {
         type: Boolean,
         default: false
@@ -232,7 +240,7 @@ const matchSchema = mongoose.Schema({
     waitForNextRount: {
         type: Boolean,
         default: false
-    }
+    },
 }, {
     timestamps: true
 });
@@ -248,7 +256,7 @@ matchSchema.index({ turn: 1, start: 1, end: 1 });
 // sab `{ players: userId, end: false }` + `sort({ createdAt: -1 })` karte hain
 // (room = match chain, isliye hamesha newest chahiye).
 // `end` andar isliye ki wo HAR player-query me hai -> Mongo seedha (user, end:false) block
-// pe jump karta hai; banda kisi match me na ho to wo block khali = turant jawab, uski poori
+// pe jump karta hai; banda kisi match me na ho to wo block khali = turant jawab, uski poorise
 // match history walk nahi karni padti (disconnect storm me yahi bachata hai).
 // `start` jaan bujh ke NAHI: wo sirf kuch queries me aata hai, aur beech me hone se baaki
 // queries ke liye `createdAt` sort index se nahi ho paata -> memory sort wapas aa jaata.

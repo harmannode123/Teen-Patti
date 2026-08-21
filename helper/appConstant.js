@@ -197,7 +197,10 @@ module.exports.gameTypeConstant = {
 // ye session shuru hone ka info hai ya session ka final result.
 module.exports.callbackType = {
     LAUNCH: "launch",
-    RESULT: "result"
+    RESULT: "result",
+    // Socket connect hone pe operator ko batate hain ki user sach me game me
+    // aa gaya (launch to sirf URL banna tha). Payload launch jaisa hi jaata hai.
+    ACTIVE: "active"
 }
 
 // ZHANDU: kitne joker deck se cut hote hain (center cards) — 3.
@@ -209,7 +212,9 @@ module.exports.zhanduConfig = {
 module.exports.roomList = [
     {
         name: "Simple Teen Patti",
-        gameType: "teenpatti"
+        gameType: "teenpatti",
+        minEntry: 10000,
+        maxEntry: 1000000
     },
     // {
     //     id: 2,
@@ -234,17 +239,23 @@ module.exports.roomList = [
     {
 
         name: "Zhandu",
-        gameType: "zhandu"
+        gameType: "zhandu",
+        minEntry: 1000,
+        maxEntry: 1000000
     },
     {
 
         name: "Flipper",
-        gameType: "flipper"
+        gameType: "flipper",
+        minEntry: 1000,
+        maxEntry: 1000000
     },
     {
 
         name: "Variation",
-        gameType: "variation"
+        gameType: "variation",
+        minEntry: 1000,
+        maxEntry: 1000000
     }
 ];
 
@@ -253,22 +264,33 @@ module.exports.variationList = [
     {
         name: "Bronze",
         bootAmount: 1000,
+        entryAmount:10000,
+        betLimit:50000
     },
     {
         name: "Silver",
         bootAmount: 5000,
+        entryAmount:50000,
+        betLimit:50000
     },
     {
         name: "Gold",
         bootAmount: 10000,
+        entryAmount:100000,
+        betLimit:100000
     },
     {
         name: "Platinum",
         bootAmount: 50000,
+        entryAmount:500000,
+        betLimit:100000
+
     },
     {
         name: "Diamond",
         bootAmount: 100000,
+        entryAmount:1000000,
+        betLimit:1000000
     }
 ];
 

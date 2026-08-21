@@ -1,6 +1,7 @@
 const { socketEmit } = require('../../helper/appConstant');
 const { socketUserAuthentication } = require('../../middleware/authentication');
 const gameplayController = require('./gameplay.controller');
+const userController = require('./user.controller');
 
 module.exports.socketController = (io) => {
 
@@ -19,6 +20,8 @@ module.exports.socketController = (io) => {
         // Ab is user ko bhejne ke liye socketId ki zaroorat nahi — room kaafi hai.
         // Reconnect par naya socket bhi yahi room join karega -> emit kabhi miss nahi hoga.
         socket.join(`user:${user._id}`);
+
+        userController.notifySessionActive(user);
 
 
         //gameplayController.selfExit(io, user, socketId, false)

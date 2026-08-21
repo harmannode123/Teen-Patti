@@ -112,10 +112,10 @@ const socketAuthError = (messageKey, language, reason) => {
     return error;
 }
 
-module.exports.socketUserAuthentication = async (socket, next) => {
+module.exports.socketUserAuthenticationOld= async (socket, next) => {
 
     try {
-                console.log(":::tokoooooooooooooo::")
+        console.log(":::tokoooooooooooooo::")
 
 
         const token = getHandshakeToken(socket);
@@ -138,7 +138,7 @@ module.exports.socketUserAuthentication = async (socket, next) => {
         if (!user) return next(socketAuthError("loginSessionExpired", language, "USER_NOT_FOUND"));
 
 
-        await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id });
+        await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id,sessionActive:true });
         socket.user = { ...user, socketId: socket.id, language };
 
         next();
@@ -149,7 +149,7 @@ module.exports.socketUserAuthentication = async (socket, next) => {
     };
 }
 
-module.exports.socketUserAuthenticationNew = async (socket, next) => {
+module.exports.socketUserAuthentication = async (socket, next) => {
 
     try {
 
@@ -165,12 +165,11 @@ module.exports.socketUserAuthenticationNew = async (socket, next) => {
         if (!tokenDetails) return next(socketAuthError("loginSessionExpired", language, "INVALID_JWT"));
 
         const { _id, userId } = tokenDetails;
-        const user = await userSchema.model.findOne({ _id, userId , sessionClosed: false}).lean();
+        const user = await userSchema.model.findOneAndUpdate({ _id, userId, sessionClosed: false }, { socketId: socket.id, disconnect: null }, { new: true }).lean();
         if (!user) return next(socketAuthError("loginSessionExpired", language, "SESSION_NOT_FOUND_OR_CLOSED"));
 
-
         // Banda wapas aa gaya -> disconnect stamp hata do.
-        await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id, disconnect: null });
+        //await userSchema.model.updateOne({ _id: user._id }, { socketId: socket.id, disconnect: null });
         socket.user = { ...user, socketId: socket.id, language };
 
         next();

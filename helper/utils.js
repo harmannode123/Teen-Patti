@@ -115,7 +115,7 @@ module.exports.turnManager = (playersData, currentUser) => {
 
 
 module.exports.sideShowTurnManager = (playersData, currentUser) => {
-    const activePlayers = playersData?.filter(x => !x?.isPacked) || [];
+    const activePlayers = playersData?.filter(x => !x?.isPacked && !x?.isAllIn) || [];
 
     if (activePlayers.length < 2) return null; // side show is not possible
 

@@ -76,6 +76,30 @@ const scheduleFlow = async (type, payload, delayMs) => {
     });
 };
 
+// Us match ke chal rahe auto-pack me kitna time BACHA hai (ms). Job hi authority hai —
+// wahi banda pack karega, to client ko dikhne wala har countdown isi se nikalna chahiye.
+//
+// `match.updatedAt` se calculate karna GALAT hai: seenCard bhi match doc update karta hai
+// (turn ke beech me updatedAt reset ho jaata), aur betTurn emit turn-change ke ~2s BAAD
+// hota hai -> dono taraf se value bahak jaati.
+//
+// Job na mile (timer hi nahi laga / already fire ho gaya) -> null. Caller decide kare.
+const getAutoPackRemainingMs = async (matchId) => {
+    if (!matchId) return null;
+    try {
+        const jid = await connection.hget(ACTIVE_JOBS, String(matchId));
+        if (!jid) return null;
+        const job = await turnQueue.getJob(jid);
+        if (!job) return null;
+        // BullMQ: timestamp = job bana tab ka epoch, delay = kitne ms baad chalega.
+        const fireAt = Number(job.timestamp || 0) + Number(job.delay || 0);
+        const left = fireAt - Date.now();
+        return left > 0 ? left : 0;
+    } catch (e) {
+        return null;
+    }
+};
+
 // Player ne time pe action le liya (ya match khatam) -> us match ka timer cancel.
 const cancelAutoPack = async (matchId) => {
     if (!matchId) return;
@@ -149,4 +173,4 @@ const startTurnWorker = () => {
     return worker;
 };
 
-module.exports = { scheduleAutoPack, cancelAutoPack, scheduleFlow, startTurnWorker };
+module.exports = { scheduleAutoPack, cancelAutoPack, scheduleFlow, startTurnWorker, getAutoPackRemainingMs };

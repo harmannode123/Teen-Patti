@@ -16,14 +16,16 @@ module.exports.createDefaultAdmin = async () => {
             totalGameList.push({
                 ...x,
                 variation: y?.name,
-                bootAmount: y?.bootAmount
+                bootAmount: y?.bootAmount,
+                entryAmount: y?.entryAmount,
+                betLimit:y?.betLimit
             })
         })
     })
 
 
     const newRooms = []
-    for (let i = 1; i <= totalGameList.length; i++) newRooms.push({ roomId: i, roomName: totalGameList[i - 1]?.name, gameType: totalGameList[i - 1]?.gameType, variation: totalGameList[i - 1]?.variation, bootAmount: totalGameList[i - 1]?.bootAmount })
+    for (let i = 1; i <= totalGameList.length; i++) newRooms.push({ roomId: i, roomName: totalGameList[i - 1]?.name, gameType: totalGameList[i - 1]?.gameType, variation: totalGameList[i - 1]?.variation, bootAmount: totalGameList[i - 1]?.bootAmount,entryAmount: totalGameList[i - 1]?.entryAmount,betLimit:totalGameList[i - 1]?.betLimit })
 
     const checkRoom = await matchSchema.model.find({});
     if (checkRoom.length === 0) {

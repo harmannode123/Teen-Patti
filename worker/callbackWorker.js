@@ -17,7 +17,7 @@ const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 connection.on("error", (err) => console.log("callback redis error =>", err.message));
 
 const QUEUE_NAME = "callback";
-const SWEEP_MS = 60 * 1000;          // sweep har 1 min
+const SWEEP_MS = 60 * 1000;          // sweep har 10 sec — result callback jaldi pahunchana hai
 const RETRY_GAP_MS = 5 * 60 * 1000;  // par ek doc ko 5 min me ek hi baar try karenge
 // Operator usi machine pe chal raha hai -> ye loopback call hai, microseconds ki baat.
 // 3s se zyada lag raha hai matlab operator hang hai, aur wait karne ka faayda nahi.
@@ -105,6 +105,14 @@ const startCallbackWorker = async () => {
 
     worker.on("error", (err) => console.log("callback-worker error =>", err.message));
     worker.on("failed", (job, err) => console.log("callback-worker job failed =>", job?.id, err?.message));
+
+    // SWEEP_MS badalne se purana schedule Redis me chipka rehta hai aur wo BHI firing
+    // karta rehta hai (repeat key me interval baked hai -> naya interval = nayi key).
+    // Isliye add se pehle mismatched intervals wale schedules hata do.
+    const existingRepeats = await callbackQueue.getRepeatableJobs();
+    for (const job of existingRepeats) {
+        if (Number(job.every) !== SWEEP_MS) await callbackQueue.removeRepeatableByKey(job.key);
+    }
 
     // Repeatable job. Saare instances yahi add karte hain par Redis repeat key se dedupe
     // ho jaata hai -> ek hi schedule banti hai.

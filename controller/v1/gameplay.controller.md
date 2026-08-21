@@ -82,15 +82,25 @@ Guards: match na mile → error; player `exitPlayers` me ho → error; cards dis
 ### `sideShow(io, user, socketId, data = {})` — exported
 Side show / final show handle karta hai. 2 active players bache to FINAL SHOW (compare → winner/draw), warna SIDE SHOW request bheji jaati hai. ZHANDU Section 6: side show tabhi allowed jab teeno joker khul chuke ho AUR requester ne kam se kam 1 seen move kiya ho. ZHANDU Section 7: 2-player show pe button-side requester ho to agla band joker khulta hai. DRAW handling: classic me requester haarta, zhandu me pot split. LOCK leta hai.
 
+Request branch ka `timer` **hardcoded nahi** hai — `getAutoPackRemainingMs(matchId)` se requester ke chal rahe 30s auto-pack ka bacha hua time bheja jaata hai (job hi asli deadline hai). Side show ka apna koi timeout job nahi: requester chahe to intezaar chhod ke seedha chaal/pack kar sakta hai, tab `placeBetCore` `sideShow` flag clear kar deta hai aur responder ka late jawab apne aap no-op ho jaata hai.
+
+Target chunne wala `sideShowTurnManager` ab **all-in players ko skip** karta hai (packed ke saath) — all-in banda side-pot ka haqdaar hai, use side show me harakar pack karana wo haq cheen leta jabki uske paas koi betting decision bacha hi nahi tha.
+
+**Final show pe do emit jaate hain, isi order me:** pehle `sideShowWinner` (`{ player1, player2, winnerId, looserId, isDraw, isFinalShow: true }` — players + watchers dono ko), phir `roundWinner`. Wajah: final show bhi 1v1 card-compare hi hai, to client wahi face-to-face reveal animation chala sake jo side show me chalti hai; pehle sirf `roundWinner` jaata tha aur compare dikhta hi nahi tha. Beech me delay JAAN-BOOJH KE nahi hai — `roundWinner` ka `nextRoundIn` countdown `startNext` job ke saath sync rehna chahiye, sequencing client karta hai. ZHANDU draw (`splitAmong`) me `looserId: null` jaata hai. (Multi-player all-in showdown `resolveShowdown` se jaata hai — wahan sirf `roundWinner`, kyunki wo 1v1 hai hi nahi.)
+
+Isi tarah `totalActivePlayers` (jo `show` vs `side show` decide karta hai) ab sirf **BETTORS** hain — `!isPacked && !isAllIn`. Iske saath ek guard bhi hai: agar contenders (`!isPacked`) bettors se ZYADA hain (matlab koi all-in contender maujood hai) to final-show branch ka seedha 2-way `compareResult` + `creditWinnerPot(pura pot)` **nahi** chalta, balki `resolveShowdown` chalta hai — warna all-in player comparison se hi ud jaata aur uska pot me laga paisa doosre ko chala jaata. Isi wajah se match query me `watchers` bhi populate hota hai (warna `sendCommonEmitForWatcher` ko sirf ObjectId milte aur spectators ko showdown/roundWinner dikhta hi nahi).
+
 ### `respondToSideShow(io, user, socketId, data = {})` — exported
 Side show ke response (accept/reject) ko handle karta hai.
-- **accept:** dono ke cards compare, looser pack (DRAW pe requester pack — PDF Section 8), turn aage, next betTurn schedule.
-- **reject:** requester ko bet continue karne ke liye `placeBetCore` (locked placeBet nahi, warna same match ka taala dobara maangne se DEADLOCK).
+- **accept:** dono ke cards compare, looser pack (DRAW pe requester pack — PDF Section 8), turn aage, next betTurn schedule. Requester ka **CHAAL bhi yahan charge hota hai** (`currentBetAmount` → uske `totalBet` + `pot`, coins se debit, uske liye alag `successPlaceBet` emit). Pehle sirf reject branch charge karta tha → accept pe requester ko muft ka turn milta tha aur pot opponent ke jawab pe depend karta tha. Coins kam pade to jitne bache utne hi kate (pot = actually debited, economy net-zero).
+- **reject:** requester ko bet continue karne ke liye `placeBetCore` (locked placeBet nahi, warna same match ka taala dobara maangne se DEADLOCK). `betAmount` pass karna ZAROORI hai — `placeBetCore` ka pehla guard uske bina turant return karta hai, aur upar `cancelAutoPack` ho chuka hota hai → match permanently freeze.
 
 LOCK leta hai; `placeBetCore` ko already-held lock ke saath call karta hai.
 
 ### `startNextRound(io, matchData)` — exported
 Round khatam hone ke baad agla match doc create karta hai (roomId, gameType, variation, bootAmount, previousWinner ke saath). Exit players ko filter karta hai.
+
+**Session filter:** coins wali DB query `sessionClosed: false` pe hai — jiska session close ho chuka (3 min disconnect ke baad `closeSession` job) wo agle round me **bilkul nahi aata**: na player, na watcher. Pehle aisa player coins=0 count hoke galti se watcher ban jaata tha; ab `closedPlayers` alag nikaal ke pura exclude hota hai, aur uska bhi `selfExitSuccess` emit jaata hai.
 
 **Affordability filter:** agle round me seat sirf usko milti hai jiske paas **boot ka dugna** coins ho — wahi rule jo `joinRoomNew` naye player pe lagata hai. Coins **DB se fresh** padhe jaate hain, `matchData.players` ka populated snapshot round-end ke pot credit se purana hota hai. Jinke paas itne coins nahi wo `watchers` me chale jaate hain (purane watchers ke saath merge, dedupe hoke), aur unka `seatPosition` claim bhi hat jaata hai warna wo seat index kisi aur ko mil hi nahi paata. Har aise nikale gaye player ka **`selfExitSuccess` emit** bhi jaata hai (sab players + watchers ko) taaki client seat turant khali kar de — index **purane** match se, kyunki naye match me uski seat hai hi nahi.
 
@@ -138,7 +148,7 @@ Self exit / disconnect: user ka `socketId` null karta hai aur `disconnect` par c
 Active (non-ended) matches ki list — har room ke `totalActivePlayers` (players − exitPlayers), roomId, start, end ke saath aggregate karke `fetchRoomList` emit karta hai.
 
 ### `fetchLobbyList(io, user, socketId, data = {})` — exported
-`gameType` ke hisaab se lobby list. `gameType` na ho to poori `roomList` (constant) bhejta hai; invalid gameType par error; warna us gameType ke matches ka aggregate (activePlayers, watchers, entryCoins, roomName, variation, bootAmount) `fetchLobbyList` emit karta hai. `selfCoin` dono emits me jaata hai aur **DB se fresh padha jaata hai** (`socket.user` handshake-time snapshot hai, uske coins stale hote hain).
+`gameType` ke hisaab se lobby list. `gameType` na ho to poori `roomList` (constant) **do events pe** bhejta hai — `gameList` AUR `fetchLobbyList` dono (jslib sirf SIO_On se registered events Unity tak forward karta hai; client `gameList` sunta hai ya nahi confirm nahi tha, isliye dono pe). Invalid gameType par error; warna us gameType ke matches ka aggregate (activePlayers, watchers, entryCoins, roomName, variation, bootAmount) `fetchLobbyList` emit karta hai. `selfCoin` sab emits me jaata hai aur **DB se fresh padha jaata hai** (`socket.user` handshake-time snapshot hai, uske coins stale hote hain).
 
 ### Round-gap constant — `NEXT_ROUND_MS` (file ke top pe)
 Round end se agla round start hone tak ka gap (abhi 10s). `startNextRound` isi se `startNext` BullMQ job schedule karta hai, aur teeno round-end paths ka `roundWinner` payload isi ka second-value `nextRoundIn` bhejta hai — client apna hardcoded countdown na chalaye. Value badalni ho to sirf yahi constant badlo.
