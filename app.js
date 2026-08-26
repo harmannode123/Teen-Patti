@@ -40,9 +40,26 @@ const io = require('socket.io')(server, {
 // emit khud kaam karega. Single process me bhi yeh safe hai (no-op jaisa).
 const { createAdapter } = require('@socket.io/redis-adapter');
 const redis = require('./helper/redis.helper');
+const { reportRedisError } = require('./helper/redisGuard.helper');
 const pubClient = redis;              // existing singleton connection
 const subClient = redis.duplicate();  // adapter ko alag subscribe connection chahiye
+// duplicate() par listener inherit NAHI hote — bina iske subClient ki error
+// unhandled 'error' event ban ke poora process crash kar deti hai (restart loop).
+subClient.on('error', (err) => { console.log('Redis sub error =>', err.message); reportRedisError(err); });
 io.adapter(createAdapter(pubClient, subClient));
+
+// Safety net: Redis outage (MISCONF jaisi) me stray promise rejections aati hain.
+// Crash/spam mat karo — log karo aur guard ko de do (wo workers pause kar dega).
+// 24 Aug incident: yehi rejections unhandled reh ke logs bhar rahi thin.
+let lastRejectionLogAt = 0;
+process.on('unhandledRejection', (err) => {
+    reportRedisError(err);
+    const now = Date.now();
+    if (now - lastRejectionLogAt > 10000) {   // 10s me max ek log (spam se disk/CPU bachao)
+        lastRejectionLogAt = now;
+        console.log('unhandledRejection =>', err?.message || err);
+    }
+});
 
 global.io = io
 // Database connection

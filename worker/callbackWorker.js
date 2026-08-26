@@ -8,13 +8,14 @@ const moment = require("moment");
 const gameSessionSchema = require("../model/gameSession.model");
 const { acquireLock, releaseLock } = require("../helper/lock.helper");
 const { callbackType } = require("../helper/appConstant");
+const { registerWorker, reportRedisError } = require("../helper/redisGuard.helper");
 
 const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 // BullMQ blocking commands use karta hai -> dedicated connection chahiye jisme
 // maxRetriesPerRequest: null ho (app ki singleton connection reuse nahi kar sakte).
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
-connection.on("error", (err) => console.log("callback redis error =>", err.message));
+connection.on("error", (err) => { console.log("callback redis error =>", err.message); reportRedisError(err); });
 
 const QUEUE_NAME = "callback";
 const SWEEP_MS = 60 * 1000;          // sweep har 10 sec — result callback jaldi pahunchana hai
@@ -105,6 +106,9 @@ const startCallbackWorker = async () => {
 
     worker.on("error", (err) => console.log("callback-worker error =>", err.message));
     worker.on("failed", (job, err) => console.log("callback-worker job failed =>", job?.id, err?.message));
+
+    // Redis outage me worker pause / recovery pe auto-resume (redisGuard.helper dekho).
+    registerWorker("callback-worker", worker);
 
     // SWEEP_MS badalne se purana schedule Redis me chipka rehta hai aur wo BHI firing
     // karta rehta hai (repeat key me interval baked hai -> naya interval = nayi key).

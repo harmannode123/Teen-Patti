@@ -168,7 +168,8 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
         const otherPlayerForSideShow = sideShowTurnManager(matchData?.playersData, currentPlayerTurnId)
 
-        showEnable = totalActivePlayers.length == 2 || otherPlayerForSideShow?.isSeen ? true : false
+        let showEnable = totalActivePlayers.length == 2 || otherPlayerForSideShow?.isSeen ? true : false
+        
 
         if(matchData?.gameType==gameTypeConstant?.ZHANDU) {
             const seenMove=matchData.playersData.find(x=>String(x?.playerId)===String(currentPlayerTurnId))?.seenMoves || 0
@@ -189,16 +190,16 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
         console.log("::::::::::::::::::::bet amount::::::::::::::::",currentBetAmount,seenPlayer || previousWinner)
 
-        
 
         matchData?.players.forEach((player) => {
+            let isAllIn=Number(currentBetAmount) >= Number(player?.coins) && matchData?.gameType==gameTypeConstant?.ZHANDU
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn });
         });
 
         matchData?.watchers.forEach((player) => {
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType,isAllIn:false });
         });
 
         if(seenCard) return;
@@ -320,7 +321,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         // betPut = actual paisa jo pot me jaata (all-in me = player ke bache saare coins).
         let isAllInMove = false
         let betPut = isPacked ? 0 : betAmount
-        if (isZhandu && !isPacked && (data?.isAllIn === true || Number(userData?.coins || 0) < amount)) {
+        if (isZhandu && !isPacked && (data?.isAllIn === true || Number(userData?.coins || 0) <= amount)) {
             isAllInMove = true
             betPut = Number(userData?.coins || 0)
             amount = Math.max(Number(currentBet) || 0, betPut)   // all-in > current -> raise jaisa
@@ -1085,7 +1086,7 @@ module.exports.startNextRound = async (io, matchData) => {
 
         let [newMatch] = await Promise.all([
             matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
-                betLimit:matchData?.betLimit
+                betLimit:matchData?.betLimitx,roomName:matchData?.roomName
             })
         ])
         newMatch = newMatch.toObject()
@@ -1366,7 +1367,6 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
     const selfCoin = freshUser?.coins ?? user?.coins ?? 0;
 
     if(!gameType){
-        console.log(":::::::::",{message: "Fetch Room List success", list:roomList, selfCoin})
         io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList, selfCoin });
         return io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList, selfCoin });
     }
@@ -1514,7 +1514,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
 
         console.log("::::::::::::::::::::Jo2222222222in Room::::::::", userData?.name);
 
-        if (!matchData) return io.to(socketId).emit(socketEmit.errorLog, { message: "Invalid match id ." });
+        if (!matchData) return io.to(socketId).emit(socketEmit.errorLog, { message: "Invalid match id." });
 
         // players/seat badle -> cache invalidate.
         await deleteMatch(matchData?._id)
@@ -1588,7 +1588,7 @@ module.exports.sendCommonEmitForWatcher = (io, matchData, emit, data = {}) => {
 
 
         matchData?.watchers && watchers.map((x) => {
-            emitToUser(io, x?._id, emit, { ...payload, selfId: x?._id, ...data })
+            emitToUser(io, x?._id, emit, { ...payload, selfId: x?._id, ...data ,selfCoin:x?.coins})
         })
 
     } catch (error) {

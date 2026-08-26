@@ -16,13 +16,14 @@
 
 const { Queue, Worker } = require("bullmq");
 const IORedis = require("ioredis");
+const { registerWorker, reportRedisError } = require("./redisGuard.helper");
 
 const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 // BullMQ blocking commands use karta hai -> dedicated connection chahiye jisme
 // maxRetriesPerRequest: null ho (app ki singleton connection reuse nahi kar sakte).
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
-connection.on("error", (err) => console.log("bullmq redis error =>", err.message));
+connection.on("error", (err) => { console.log("bullmq redis error =>", err.message); reportRedisError(err); });
 
 const QUEUE_NAME = "turn-timer";
 const TURN_MS = 30000; // 30s turn (client timer ke barabar)
@@ -168,6 +169,9 @@ const startTurnWorker = () => {
 
     worker.on("error", (err) => console.log("turn-worker error =>", err.message));
     worker.on("failed", (job, err) => console.log("turn-worker job failed =>", job?.id, err?.message));
+
+    // Redis outage me worker pause / recovery pe auto-resume (redisGuard.helper dekho).
+    registerWorker("turn-worker", worker);
 
     console.log("----- Turn auto-pack worker started. -----");
     return worker;

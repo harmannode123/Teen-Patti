@@ -6,13 +6,14 @@ const IORedis = require("ioredis");
 const userSchema = require("../model/user.model");
 const gameSessionSchema = require("../model/gameSession.model");
 const { acquireLock, releaseLock } = require("../helper/lock.helper");
+const { registerWorker, reportRedisError } = require("../helper/redisGuard.helper");
 
 const redisUrl = process.env.REDIS_URL || "redis://127.0.0.1:6379";
 
 // BullMQ blocking commands use karta hai -> dedicated connection chahiye jisme
 // maxRetriesPerRequest: null ho (app ki singleton connection reuse nahi kar sakte).
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
-connection.on("error", (err) => console.log("settlement redis error =>", err.message));
+connection.on("error", (err) => { console.log("settlement redis error =>", err.message); reportRedisError(err); });
 
 const QUEUE_NAME = "settlement";
 const SWEEP_MS = 60 * 1000;      // har 10 sec — result callback jaldi pahunchana hai
@@ -30,7 +31,7 @@ const runSettlementSweep = async () => {
 
     try {
         const rows = await userSchema.model.aggregate([
-            { $match: { sessionActive:true,sessionClosed: true } },
+            { $match: { sessionActive:true,sessionClosed: true} },
             {
                 $lookup: {
                     from: "matches",
@@ -46,7 +47,7 @@ const runSettlementSweep = async () => {
                 }
             },
             { $match: { pendingMatches: { $size: 0 } } },
-            { $project: { _id: 1, coins: 1, amount: 1 } }
+            { $project: { _id: 1, coins: 1, amount: 1,sendCallback:1 } }
         ]);
 
         if (!rows.length) return;
@@ -60,7 +61,8 @@ const runSettlementSweep = async () => {
                     finalCoins: u.coins || 0,
                     netResult: (u.coins || 0) - (u.amount || 0),
                     settlement: true,
-                    startAmount:u?.amount
+                    startAmount:u?.amount,
+                    sendCallback:u?.sendCallback,
                 },
                 upsert: true,
             }
@@ -91,6 +93,9 @@ const startSettlementWorker = async () => {
 
     worker.on("error", (err) => console.log("settlement-worker error =>", err.message));
     worker.on("failed", (job, err) => console.log("settlement-worker job failed =>", job?.id, err?.message));
+
+    // Redis outage me worker pause / recovery pe auto-resume (redisGuard.helper dekho).
+    registerWorker("settlement-worker", worker);
 
     // SWEEP_MS badalne se purana schedule Redis me chipka rehta hai aur wo BHI firing
     // karta rehta hai (repeat key me interval baked hai -> naya interval = nayi key).
