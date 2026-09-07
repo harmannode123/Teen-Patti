@@ -168,25 +168,27 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
         const otherPlayerForSideShow = sideShowTurnManager(matchData?.playersData, currentPlayerTurnId)
 
-        let showEnable = totalActivePlayers.length == 2 || otherPlayerForSideShow?.isSeen ? true : false
+        const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(currentPlayerTurnId))?.isSeen
+        const previousWinner=String(matchData?.previousWinner) === String(currentPlayerTurnId)
+        let showEnable = totalActivePlayers.length == 2 || (otherPlayerForSideShow?.isSeen && seenPlayer) ? true : false
+
         
 
         if(matchData?.gameType==gameTypeConstant?.ZHANDU) {
             const seenMove=matchData.playersData.find(x=>String(x?.playerId)===String(currentPlayerTurnId))?.seenMoves || 0
             const openJokerCount=matchData?.jokerCards?.filter(x=>x?.opened)?.length || 0
-            if(seenMove>0 && openJokerCount==3 && otherPlayerForSideShow?.isSeen ) showEnable=true
+            if(seenMove>0 && openJokerCount==3 && otherPlayerForSideShow?.isSeen && seenPlayer) showEnable=true
             else if(totalActivePlayers.length == 2)showEnable=true
             else showEnable=false
         }
         const exitPlayers = matchData?.exitPlayers?.map(x => String(x)).includes(String(currentPlayerTurnId))
 
         let currentBetAmount= matchData?.currentBetAmount
-        const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(currentPlayerTurnId))?.isSeen
-        const previousWinner=String(matchData?.previousWinner) === String(currentPlayerTurnId)
-
+      
         if(seenPlayer && previousWinner )currentBetAmount=currentBetAmount*4
         else if(seenPlayer || previousWinner)currentBetAmount=currentBetAmount*2
-        const betLimit=matchData?.betLimit-matchData?.currentBetAmount
+        // const betLimit=matchData?.betLimit-matchData?.currentBetAmount
+        const betLimit=matchData?.betLimit
 
         console.log("::::::::::::::::::::bet amount::::::::::::::::",currentBetAmount,seenPlayer || previousWinner)
 
@@ -194,7 +196,7 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
         matchData?.players.forEach((player) => {
             let isAllIn=Number(currentBetAmount) >= Number(player?.coins) && matchData?.gameType==gameTypeConstant?.ZHANDU
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn,timerReset:!seenCard });
         });
 
         matchData?.watchers.forEach((player) => {
@@ -217,7 +219,8 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
 
 const resolveShowdown = async (io, matchData) => {
-    const pots = buildSidePots(matchData?.playersData, matchData?.bootAmount)
+    // boot ALAG SE pass nahi karte — playersData ke totalBet me boot pehle se hi shamil hai.
+    const pots = buildSidePots(matchData?.playersData)
 
     const potResults = []
     for (let i = 0; i < pots.length; i++) {
@@ -272,13 +275,12 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
         if(!isPacked && !betAmount) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Invalid bet amount." });
         console.log("::::::placeBetCore:::::::",data)
-
+        betAmount=Number(betAmount)
 
         let userId = socketId ? user?._id : user
         const check = socketId ? { _id: user?._id, socketId} : { _id: user }
 
         // if turn are run automatic then we will get userId
-        console.log(":::::::::::::::place BEt:::::::::", { userId, name: user?.name, check })
 
         // Match ka _id: caller (wrapper / respondToSideShow) ne diya to wahi; warna halki lookup.
         let matchId = matchIdHint
@@ -298,38 +300,55 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         if (!matchData || !userData || matchData.end || !matchData.start || String(matchData.turn) !== String(userId)) {
             return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Not your turn." });
         }
-        // else if (amount && amount != matchData?.currentBetAmount) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Invalid bet amount." });
-
-        let currentBet =Number(betAmount) > Number(matchData?.currentBetAmount) ? Number(betAmount) : matchData?.currentBetAmount
+        const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(userId))?.isSeen
+        const previousWinner=String(matchData?.previousWinner) === String(userId)
+        let currentBet = Number(matchData?.currentBetAmount)
+        const isZhandu = matchData?.gameType === gameTypeConstant?.ZHANDU
+        const isFlipper= matchData?.gameType === gameTypeConstant?.FLIPPER
+        let isAllInMove = false
+        isPacked = isPacked || false
+        const myCoins = Number(userData?.coins) || 0
 
         if(!isPacked){
-            const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(userId))?.isSeen
-            const previousWinner=String(matchData?.previousWinner) === String(userId)
-            if(seenPlayer && previousWinner)  currentBet = Number(betAmount) / 4;
-            else if(seenPlayer || previousWinner) currentBet = Number(betAmount)/2
-          //  else currentBet = Number(betAmount)
+            let minBetPut =matchData?.currentBetAmount
+            if(seenPlayer && previousWinner ) minBetPut = minBetPut*4
+            else if(seenPlayer || previousWinner) minBetPut = minBetPut*2
+
+            if((betAmount < minBetPut) && myCoins>=minBetPut) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
+
+            if(!isZhandu && (betAmount < minBetPut)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
+
+            if(isZhandu){
+                if(myCoins <= minBetPut) {
+                    isAllInMove=true
+                    currentBet = currentBet
+                }
+                else if(betAmount > myCoins) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
+                else if(betAmount > minBetPut){
+
+                    if(seenPlayer && previousWinner) currentBet = betAmount / 4;
+                    else if(seenPlayer || previousWinner) currentBet = betAmount /2;
+                    else currentBet = betAmount
+                } 
+                else if(betAmount == minBetPut)  currentBet = currentBet
+            }
+            else {
+                if(betAmount > myCoins) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
+                else if(betAmount > minBetPut){
+
+                    if(seenPlayer && previousWinner) currentBet = betAmount / 4;
+                    else if(seenPlayer || previousWinner) currentBet = betAmount /2;
+                    else currentBet = betAmount
+                } 
+                else if(betAmount == minBetPut)  currentBet = currentBet
+            }
         }
-        isPacked = isPacked || false
-        const isZhandu = matchData?.gameType === gameTypeConstant?.ZHANDU
 
-        //ADD VALIDATION FOR RAISE BET
-        //amount = isRaisebet ? Number(currentBet) * 2 : Number(currentBet)
-        amount = currentBet
-
-
-        // ALL-IN (sirf ZHANDU): explicit flag (data.isAllIn) ya coins required se kam pade.
-        // betPut = actual paisa jo pot me jaata (all-in me = player ke bache saare coins).
-        let isAllInMove = false
-        let betPut = isPacked ? 0 : betAmount
-        if (isZhandu && !isPacked && (data?.isAllIn === true || Number(userData?.coins || 0) <= amount)) {
-            isAllInMove = true
-            betPut = Number(userData?.coins || 0)
-            amount = Math.max(Number(currentBet) || 0, betPut)   // all-in > current -> raise jaisa
+        let betPut = isPacked ? 0 : betAmount   //this betput save in playerdata and add in pot
+        if (isZhandu && isAllInMove) {
+            betPut = myCoins
         }
-        let updatePot = betPut
 
-       
-        const myCoins = userData?.coins || 0
         if (!isPacked && (betPut <= 0 || betPut > myCoins))  return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
         
 
@@ -345,7 +364,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                 if (isPacked) { x.isPacked = true }
                 // ===== ZHANDU: all-in aware (totalBet = actual betPut, side-pot ke liye) =====
                 else if (isZhandu) {
-                    x.totalBet += betPut
+                   // x.totalBet += betPut
                     if (x?.isSeen) x.seenMoves = (x.seenMoves || 0) + 1
                     if (isAllInMove) {
                         x.isAllIn = true
@@ -355,16 +374,9 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                 }
                 // ===== BAAKI variants: BILKUL ORIGINAL logic (untouched) =====
                 else if (x?.isSeen) {
-                    x.totalBet += updatePot
                     x.seenMoves = (x.seenMoves || 0) + 1
                 }
-                else if (matchData?.raise) {
-                    x.totalBet += (updatePot / 2)
-                }
-                else {
-                    x.totalBet += updatePot
-                }
-
+                x.totalBet += betPut || 0
                 x.turn = false
             }
             else if (nextPlayerTurnId && String(x?.playerId) == String(nextPlayerTurnId)) {
@@ -397,7 +409,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, turn: userId }, {
             // FOLD free hai -> pot na badhe (pehle fold pe bhi pot += amount ho raha tha =
             // phantom coins/inflation). Sirf actual bet/raise pe pot badhega.
-            turn: nextPlayerTurnId, playersData: matchData?.playersData, $inc: { pot: isPacked ? 0 : updatePot },
+            turn: nextPlayerTurnId, playersData: matchData?.playersData, $inc: { pot: isPacked ? 0 : betPut },
           //  currentBetAmount: amount,
             currentBetAmount:currentBet,
             // ...(disconnect ? { $addToSet: { exitPlayers: userId } } : {}),
@@ -474,7 +486,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
             console.log("::::::::::::::::::player1:::::", player1,)
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC });
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC,selfCoin: player?.coins });
             });
 
             this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
@@ -841,7 +853,7 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             this.sendCommonEmitForWatcher(io, matchData, socketEmit.sideShowWinner, sideShowWinnerPayload)
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC });
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
             });
             this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
@@ -1022,10 +1034,19 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
             // `betAmount` DENA ZAROORI hai: placeBetCore ka pehla guard (!isPacked && !betAmount)
             // warna turant return kar deta tha -> requester ka chaal lagta hi nahi, turn usi pe
             // atka rehta, aur upar cancelAutoPack ho chuka hota -> match hamesha ke liye freeze.
+
+        const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(otherPlayerId))?.isSeen
+        const previousWinner=String(matchData?.previousWinner) === String(otherPlayerId)
+
+         let currentBetAmount= matchData?.currentBetAmount
+        if(seenPlayer && previousWinner )currentBetAmount=currentBetAmount*4
+        else if(seenPlayer || previousWinner)currentBetAmount=currentBetAmount*2
+
+
             await placeBetCore(io, otherPlayerId, null, {
                 isPacked: false,
-                amount: matchData?.currentBetAmount,
-                betAmount: matchData?.currentBetAmount,
+                amount: currentBetAmount,
+                betAmount: currentBetAmount,
             }, matchData?._id);
         }
 
@@ -1086,7 +1107,7 @@ module.exports.startNextRound = async (io, matchData) => {
 
         let [newMatch] = await Promise.all([
             matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
-                betLimit:matchData?.betLimitx,roomName:matchData?.roomName
+                betLimit:matchData?.betLimit,roomName:matchData?.roomName
             })
         ])
         newMatch = newMatch.toObject()

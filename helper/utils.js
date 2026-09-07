@@ -411,14 +411,14 @@ module.exports.compareResult = (player1, player2, matchContext = {}) => {
             bestCards: player1Hand.usedCards,
             hand: player1Hand.name,
             playerId: player1?.playerId,
-            index: player1?.index || -1
+            index: player1?.index  ?? -1
         },
         player2: {
             cards: player2Cards,
             bestCards: player2Hand.usedCards,
             hand: player2Hand.name,
             playerId: player2?.playerId,
-            index: player2?.index || -1
+            index: player2?.index ?? -1
 
         }
     }
@@ -449,14 +449,19 @@ module.exports.getApplicableJokerValues = (matchData, player) => {
     return opened
 }
 
-// ALL-IN (Phase 5): SIDE POTS banana. Har player ka contribution = boot + totalBet
+// ALL-IN (Phase 5): SIDE POTS banana. Har player ka contribution = uska `totalBet`
 // (FOLDED bhi include -> unka paisa "dead money" pots me jaata, par wo jeet nahi sakte).
 // Sabse chhoti contribution se layer-by-layer pots: har pot ka `eligible` = wahi
 // non-folded players jinhone us level tak daala. Uncontested layer (sirf 1 eligible)
 // ka paisa us player ko wapas mil jaata (wo akela "jeet" leta).
-module.exports.buildSidePots = (playersData, bootAmount = 0) => {
+//
+// BOOT yahan ALAG SE MAT JODO: `startMatch` playersData banate waqt hi har player ka
+// `totalBet` = bootAmount se seed kar deta hai. Pehle yahan `bootAmount + totalBet` tha
+// -> boot DO baar ginti me aata -> side pots ka total asli `match.pot` se ZYADA ban jaata
+// (phantom coins; economy net-zero toot jaata). Invariant: sum(totalBet) == pot.
+module.exports.buildSidePots = (playersData) => {
     const remaining = {}
-    ;(playersData || []).forEach(p => { remaining[String(p?.playerId)] = (bootAmount || 0) + (p?.totalBet || 0) })
+    ;(playersData || []).forEach(p => { remaining[String(p?.playerId)] = (p?.totalBet || 0) })
 
     const eligible = (playersData || []).filter(p => !p?.isPacked).map(p => String(p?.playerId))
     const pots = []

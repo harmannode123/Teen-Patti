@@ -190,7 +190,8 @@ module.exports.gameTypeConstant = {
     JOKER: "joker",
     FOUR_CARD: "fourcard",
     TWO_CARD: "twocard",
-    ZHANDU: "zhandu"
+    ZHANDU: "zhandu",
+    FLIPPER:"flipper",
 }
 
 // Operator ko jaane wale callback ka type. Operator isi se pehchanta hai ki
