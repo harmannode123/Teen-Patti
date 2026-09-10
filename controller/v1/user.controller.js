@@ -23,7 +23,6 @@ const LAUNCH_ALLOWED_USER_IDS = [
     "3829523755",
     "2827848229",
     "7898354436"
-
 ];
 
 module.exports.launch = async (req, res, next) => {

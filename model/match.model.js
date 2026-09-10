@@ -139,11 +139,16 @@ const matchSchema = mongoose.Schema({
     // har entry { card: <cardObj>, opened: Boolean }. opened jokers ke
     // cardValue wild ban jaate hain. J1 boot ke baad, J2 round-1 ke baad,
     // J3 round-2 ke baad open hota hai.
+    // FLIPPER me yahi array 4 entries rakhta hai: index 0-2 = VARIABLE joker
+    // (har fold pe folder ki cards se replace ho jaate hain), index 3 = FIXED joker
+    // (isFixed:true, kabhi nahi badalta). Chaaron start me hi opened:true hote hain.
     jokerCards: {
         type: [
             {
                 card: { type: mongoose.Schema.Types.Mixed, default: null },
-                opened: { type: Boolean, default: false }
+                opened: { type: Boolean, default: false },
+                // FLIPPER only: true = 4th fixed joker, replace se bacha rehta hai.
+                isFixed: { type: Boolean, default: false }
             }
         ],
         default: []

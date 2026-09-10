@@ -154,6 +154,11 @@ const startTurnWorker = () => {
                     // ZHANDU: pehla betTurn se 2s pehle J1 jokerOpened emit.
                     await gameplay._flowFirstJoker(io, d.matchId);
                     break;
+                case "sideShowTimeout":
+                    // Side show ka jawab bache hue time me nahi aaya -> show reject maan ke
+                    // requester ki chaal laga do (auto-pack ki jagah, wo yahan cancel ho chuka).
+                    await gameplay._flowSideShowTimeout(io, d.matchId, d.requesterId, d.responderId);
+                    break;
                 case "startNext":
                     // Round khatam -> agla match shuru.
                     await gameplay._flowStartNext(io, d.matchId);

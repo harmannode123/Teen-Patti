@@ -51,8 +51,8 @@ module.exports.socketController = (io) => {
 
 
         // Disconnection
-        socket.on(socketEmit.disconnect, async () => gameplayController.selfExit(io, user, socketId, true));
-        socket.on(socketEmit.selfExit, async () => gameplayController.selfExit(io, user, socketId, false));
+        socket.on(socketEmit.disconnect, async (data) => gameplayController.selfExit(io, user, socketId, true,data));
+        socket.on(socketEmit.selfExit, async (data) => gameplayController.selfExit(io, user, socketId, false,data));
 
     });
 };

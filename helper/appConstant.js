@@ -304,6 +304,8 @@ module.exports.gameTypeConfig = {
     joker: { cardsPerPlayer: 3, handSize: 3 },
     // zhandu: classic deal (3 cards), par 3 jokers progressive open hote hain
     zhandu: { cardsPerPlayer: 3, handSize: 3 },
+    // flipper: classic deal (3 cards), par 4 joker board pe (3 variable + 1 fixed)
+    flipper: { cardsPerPlayer: 3, handSize: 3 },
     fourcard: { cardsPerPlayer: 4, handSize: 3 },
     // two-card: dealt 2, but the final hand is still the best 3-card combo
     // made by "assuming" a third card (per official rules), so handSize = 3

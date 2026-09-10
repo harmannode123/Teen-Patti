@@ -371,7 +371,10 @@ const resolvePlayerHand = (dealtCards, matchContext = {}) => {
     const { gameType, jokerValue, jokerValues } = matchContext
 
     // ZHANDU: jokerValues = abhi tak khule jokers ke cardValue ka array (0..3 wild ranks).
-    if (gameType === "zhandu") {
+    // FLIPPER: wahi array, par hamesha 4 wild (3 variable + 1 fixed, sab shuru se khule).
+    // Bina is branch ke flipper neeche gir ke evaluateBestHand pe chala jaata -> joker
+    // count me hi nahi aate aur poora hand ranking galat.
+    if (gameType === "zhandu" || gameType === "flipper") {
         return evaluateBestHandWithJoker(dealtCards, jokerValues || [])
     }
 
@@ -447,6 +450,46 @@ module.exports.getApplicableJokerValues = (matchData, player) => {
         return opened.slice(0, player.appliedJokers)
     }
     return opened
+}
+
+// FLIPPER (PDF §1): board pe 4 joker bante hain — 3 VARIABLE + 1 FIXED — aur chaaron
+// shuru me hi khule hote hain. Zhandu wala "ek-ek karke kholna" yahan nahi hai.
+module.exports.buildFlipperJokers = (deck) => {
+    const jokers = []
+
+    // pehle 3 variable (har fold pe yahi badalte hain)
+    jokers.push({ card: deck.pop(), opened: true, isFixed: false })
+    jokers.push({ card: deck.pop(), opened: true, isFixed: false })
+    jokers.push({ card: deck.pop(), opened: true, isFixed: false })
+
+    // aur aakhir me 1 fixed (ye kabhi nahi badalta)
+    jokers.push({ card: deck.pop(), opened: true, isFixed: true })
+
+    return jokers
+}
+
+// FLIPPER (PDF §2): koi player pack kare to center ke 3 VARIABLE joker hata do aur uski
+// foldi hui cards ko naya joker bana do. isFixed wala waisa hi rehta hai.
+// Wapas naya array milta hai (purane ko chhedte nahi — wahi cache aur emit me jaata hai).
+// Cards poori na mili to null — matlab "board mat badlo", kyunki aadha board banane se
+// sabka hand galat ban jaata.
+module.exports.replaceVariableJokers = (jokerCards, foldedCards) => {
+    if (!jokerCards?.length || !foldedCards?.length) return null
+
+    const newJokers = []
+    let next = 0   // folded cards me se agli card
+
+    for (const joker of jokerCards) {
+        if (joker?.isFixed) {
+            newJokers.push(joker)
+        } else {
+            const card = foldedCards[next++]
+            if (!card) return null   // itni cards hi nahi -> rehne do
+            newJokers.push({ card, opened: true, isFixed: false })
+        }
+    }
+
+    return newJokers
 }
 
 // ALL-IN (Phase 5): SIDE POTS banana. Har player ka contribution = uska `totalBet`
