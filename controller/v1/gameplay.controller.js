@@ -5,7 +5,7 @@ const matchSchema = require("../../model/match.model");
 const economySchema = require("../../model/economy.mode.")
 const gameSessionSchema = require("../../model/gameSession.model");
 const cardDeck = require("../../helper/card.json");
-const { turnManager, sideShowTurnManager, compareResult, parseMongoObjectId, checkIndex, getOpenedJokerValues, getApplicableJokerValues, buildSidePots, pickPotWinners, evaluateBestHandWithJoker, previousWinnerIndex } = require("../../helper/utils");
+const { turnManager, sideShowTurnManager, compareResult, parseMongoObjectId, checkIndex, getOpenedJokerValues, getApplicableJokerValues, buildSidePots, pickPotWinners, evaluateBestHandWithJoker, previousWinnerIndex, buildFlipperJokers, replaceVariableJokers } = require("../../helper/utils");
 const { acquireLock, releaseLock } = require("../../helper/lock.helper");
 const { emitToUser } = require("../../helper/emit.helper");
 const { scheduleAutoPack, cancelAutoPack, scheduleFlow, getAutoPackRemainingMs } = require("../../helper/turnTimer.helper");
@@ -26,6 +26,11 @@ const SESSION_CLOSE_MS = 2 * 1000;   // 30 sec — itne me wapas nahi aaya to se
 // (pehle client ka timer server se alag tha -> match "jaldi" start hota dikhta tha).
 const NEXT_ROUND_MS = 20000;              // 10s
 const NEXT_ROUND_SEC = NEXT_ROUND_MS / 1000;
+
+// FLIPPER §4 (decision D3): all-in ke forced side show ke baad agli cheez (agla betTurn,
+// ya chain ka agla link) itni der baad. Client ko dono hand ka reveal + winner animation
+// dikhane ka time chahiye. Ek hi jagah define hai taaki live test me tuning ek line ho.
+const FLIPPER_CHAIN_MS = 3000;            // 3s
 
 
 function shuffle(deck) {
@@ -128,6 +133,11 @@ module.exports.startMatch = async (io, matchData) => {
                 jokerCards.push({ card: cards.pop(), opened: i === 0 })
             }
         }
+        // FLIPPER: 4 joker (3 variable + 1 fixed) aur chaaron shuru se hi khule.
+        // Isliye flipper me movesRound ka koi kaam nahi — 0 hi pada rehta hai.
+        else if (startMatch?.gameType === gameTypeConstant?.FLIPPER) {
+            jokerCards = buildFlipperJokers(cards)
+        }
 
         const playersData = []
         sortPlayer.map((x) => {
@@ -164,7 +174,7 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
         let index = checkIndex(matchData, currentPlayerTurnId)
 
-        const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked) || [];
+        const totalActivePlayers = matchData?.playersData?.filter(x => !x?.isPacked && !x?.isAllIn) || [];
 
         const otherPlayerForSideShow = sideShowTurnManager(matchData?.playersData, currentPlayerTurnId)
 
@@ -181,6 +191,17 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
             else if(totalActivePlayers.length == 2)showEnable=true
             else showEnable=false
         }
+        // FLIPPER: side show tabhi jab SAARE bache hue players seen ho chuke hon, aur
+        // maangne wale ne khud kam se kam ek seen move kar liya ho.
+        // (Zhandu wali "teeno joker khule" wali shart yahan bematlab hai — flipper me
+        //  joker to shuru se hi khule hote hain.)
+        else if(matchData?.gameType==gameTypeConstant?.FLIPPER) {
+            const seenMove=matchData.playersData.find(x=>String(x?.playerId)===String(currentPlayerTurnId))?.seenMoves || 0
+            const allPlayersSeen=totalActivePlayers.every(x=>x?.isSeen)
+            if(seenMove>0 && allPlayersSeen) showEnable=true
+            else if(totalActivePlayers.length == 2)showEnable=true
+            else showEnable=false
+        }
         const exitPlayers = matchData?.exitPlayers?.map(x => String(x)).includes(String(currentPlayerTurnId))
 
         let currentBetAmount= matchData?.currentBetAmount
@@ -190,18 +211,21 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
         // const betLimit=matchData?.betLimit-matchData?.currentBetAmount
         const betLimit=matchData?.betLimit
 
-        console.log("::::::::::::::::::::bet amount::::::::::::::::",currentBetAmount,seenPlayer || previousWinner)
+        console.log("::::::::::::::::::::bet amount::::::::::::::::",{currentBetAmount,seenPlayer , previousWinner,p:matchData?.previousWinner,c:currentPlayerTurnId})
 
 
         matchData?.players.forEach((player) => {
-            let isAllIn=Number(currentBetAmount) >= Number(player?.coins) && matchData?.gameType==gameTypeConstant?.ZHANDU
+            // Client ko "All In" button dikhane ka flag. FLIPPER me bhi all-in hai (§4),
+            // isliye wo bhi shamil — warna player ke paas move hi nahi bachta jab coins
+            // minimum bet se kam ho jaayein.
+            let isAllIn=Number(currentBetAmount) >= Number(player?.coins) && (matchData?.gameType==gameTypeConstant?.ZHANDU || matchData?.gameType==gameTypeConstant?.FLIPPER)
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn,timerReset:!seenCard });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn,timerReset:!seenCard ,seenPlayer});
         });
 
         matchData?.watchers.forEach((player) => {
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType,isAllIn:false });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType,isAllIn:false,seenPlayer });
         });
 
         if(seenCard) return;
@@ -217,6 +241,25 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 }
 
 
+
+// roundWinner ke saath winner ke CARDS bhejne ke liye. Pehle har round-end branch
+// apne alag shape me cards deta tha (showdown -> `reveal` map, fold-win -> `player1`,
+// show -> `player1`/`player2`), to client ko teen jagah dekhna padta tha. Ye helper
+// ek hi uniform `winnersCards` banata hai jo teeno paths pe same rehta hai.
+// Multi-pot me ek player kai pot jeet sakta hai -> ids dedupe kar dete hain.
+const buildWinnersCards = (matchData, winnerIds = []) => {
+    const ids = [...new Set((winnerIds || []).filter(Boolean).map(String))]
+    return ids.map(id => {
+        const pd = matchData?.playersData?.find(x => String(x?.playerId) === id)
+        const info = matchData?.players?.find(x => String(x?._id) === id)
+        return {
+            playerId: id,
+            index: checkIndex(matchData, id),
+            name: info?.name,
+            cards: pd?.cards || []
+        }
+    })
+}
 
 const resolveShowdown = async (io, matchData) => {
     // boot ALAG SE pass nahi karte — playersData ke totalBet me boot pehle se hi shamil hai.
@@ -243,6 +286,10 @@ const resolveShowdown = async (io, matchData) => {
 
     const mainWinner = potResults[0]?.winners?.[0] || null
 
+    // Saare pot winners ke cards (main winner sabse pehle).
+    const winnersCards = buildWinnersCards(matchData, [mainWinner, ...potResults.flatMap(r => r?.winners || [])])
+    const winnerCards = winnersCards.find(x => String(x?.playerId) === String(mainWinner))?.cards || []
+
     // Non-folded players ke cards reveal (client showdown dikha sake).
     const reveal = {}
     matchData.playersData.forEach(pd => {
@@ -255,13 +302,13 @@ const resolveShowdown = async (io, matchData) => {
     // matchData.players.forEach(player => {
     //     emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
     // })
-    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
+    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
     await cancelAutoPack(matchData?._id)
     matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { end: true, winner: mainWinner, pots: potResults }, { new: true }).populate('players', 'name socketId coins').lean()
 
     matchData.players.forEach(player => {
-        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
+        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
     })
     await deleteMatch(matchData?._id)
     this.startNextRound(io, matchData)
@@ -316,9 +363,14 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
             if((betAmount < minBetPut) && myCoins>=minBetPut) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
 
-            if(!isZhandu && (betAmount < minBetPut)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
+            // FLIPPER bhi zhandu ki tarah all-in support karta hai (§4), isliye usko bhi
+            // is "kam bet allowed nahi" wali rok se bahar rakha — all-in me bet minBet se
+            // kam hota hi hai (jitne coins bache utne hi).
+            if(!isZhandu && !isFlipper && (betAmount < minBetPut)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
 
-            if(isZhandu){
+            // Zhandu aur flipper ka bet-calculation bilkul same hai (dono me all-in hai),
+            // isliye ek hi branch — alag copy rakhne se kal ko ek jagah fix, doosri jagah bug.
+            if(isZhandu || isFlipper){
                 if(myCoins <= minBetPut) {
                     isAllInMove=true
                     currentBet = currentBet
@@ -345,7 +397,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         }
 
         let betPut = isPacked ? 0 : betAmount   //this betput save in playerdata and add in pot
-        if (isZhandu && isAllInMove) {
+        if ((isZhandu || isFlipper) && isAllInMove) {
             betPut = myCoins
         }
 
@@ -356,7 +408,10 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
         // Non-zhandu: agla turn nahi -> return (ORIGINAL behaviour, chhedo mat).
         // Zhandu: showdown tail handle karega (all-in me bettor khatam ho sakta).
-        if (!isZhandu && !nextPlayerTurnId) return;
+        // FLIPPER all-in: yahan bhi nextPlayerTurnId null aa sakta hai (all-in wala khud
+        // turnManager se filter ho jaata) — par forced side show to phir bhi chalana hai,
+        // isliye us case ko chhoot di. Flipper ki normal chaal purane raste se hi jaati hai.
+        if (!isZhandu && !(isFlipper && isAllInMove) && !nextPlayerTurnId) return;
 
         matchData.playersData.map((x) => {
             if (String(x?.playerId) == String(userId)) {
@@ -372,6 +427,15 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                         x.appliedJokers = (Number(matchData?.movesRound || 0) === 0 ? 2 : 3)
                     }
                 }
+                // ===== FLIPPER: all-in mark, par joker FREEZE nahi =====
+                // Zhandu me all-in wale ke jokers freeze hote hain (appliedJokers) kyunki
+                // wahan joker baad me khulte hain. Flipper me chaaron shuru se khule hote
+                // hain -> freeze karne ko kuch hai hi nahi. Uska hisaab forced side show
+                // (allInSideShow) karta hai, yahan bas flag laga do.
+                else if (isFlipper) {
+                    if (x?.isSeen) x.seenMoves = (x.seenMoves || 0) + 1
+                    if (isAllInMove) x.isAllIn = true
+                }
                 // ===== BAAKI variants: BILKUL ORIGINAL logic (untouched) =====
                 else if (x?.isSeen) {
                     x.seenMoves = (x.seenMoves || 0) + 1
@@ -384,6 +448,15 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
             }
         })
 
+        // FLIPPER: jo banda abhi pack hua, uski cards hi naye variable joker ban jaati hain.
+        // null aaya to board waisa hi rehne do (neeche update aur emit dono skip ho jaate).
+        let newJokers = null
+        if (isFlipper && isPacked) {
+            const packedPlayer = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
+            newJokers = replaceVariableJokers(matchData?.jokerCards, packedPlayer?.cards)
+            if (newJokers) matchData.jokerCards = newJokers
+        }
+
         // ZHANDU: round key (movesRound) = sabse bada KHULA joker ka index.
         //   match start  -> movesRound 0 -> jokerCards[0] (J1) pehle hi khula.
         //   last active player ne khela (round poora) -> movesRound++ -> us index ka joker khol do.
@@ -392,7 +465,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         let openedJoker = null
         let zhanduUpdate = {}
         if (matchData?.gameType === gameTypeConstant?.ZHANDU) {
-            const stillActive = matchData.playersData.filter(x => !x?.isPacked)
+            const stillActive = matchData.playersData.filter(x => !x?.isPacked && !x?.isAllIn)
             if (stillActive.length >= 2 && isZhanduRoundComplete(matchData, userId)) {
                 const round = (matchData.movesRound || 0) + 1
                 const jk = matchData.jokerCards?.[round]   // round = us joker ka index
@@ -416,6 +489,7 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
             ...(matchData?.sideShow ? { sideShow: false } : {}),
             ...(!matchData?.raise && isRaisebet ? { raise: true } : {}),
             ...zhanduUpdate,
+            ...(newJokers ? { jokerCards: newJokers } : {}),
 
         }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
 
@@ -432,6 +506,9 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
         // ZHANDU: joker khula to sab players + watchers ko batao (board pe naya wild dikhe).
         if (openedJoker) this.emitJokerOpened(io, matchData, openedJoker)
 
+        // FLIPPER: board flip hua -> sab ko naya board bhejo.
+       // if (newJokers) this.emitJokerOpened(io, matchData, matchData?.jokerCards?.[0], userId)
+
 
         const index = checkIndex(matchData, userId)
 
@@ -442,12 +519,12 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
 
         matchData.players.forEach((player) => {
-            const data = {_id: matchData?._id, userId, index, isPacked, currentBetAmount: betAmount ||matchData?.currentBetAmount, pot: matchData?.pot, selfCoin:selfCoin, selfBet}
+            const data = {_id: matchData?._id, userId, index, isPacked, currentBetAmount: betAmount ||matchData?.currentBetAmount, pot: matchData?.pot, selfCoin:selfCoin, selfBet,isFlipper, jokerCards: matchData?.jokerCards}
             emitToUser(io, player?._id, socketEmit.successPlaceBet, data);
         });
 
 
-        this.sendCommonEmitForWatcher(io, matchData, socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin, selfBet })
+        this.sendCommonEmitForWatcher(io, matchData, socketEmit.successPlaceBet, { _id: matchData?._id, userId, index, isPacked, currentBetAmount: matchData?.currentBetAmount, pot: matchData?.pot, selfCoin, selfBet,isFlipper,jokerCards: matchData?.jokerCards })
 
         // ===== ZHANDU: all-in aware routing =====
         if (isZhandu) {
@@ -463,6 +540,12 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                 // 2+ contender par koi bettor act karne ko nahi bacha (sab all-in) -> SHOWDOWN.
                 await resolveShowdown(io, matchData)
             }
+        }
+        // ===== FLIPPER ALL-IN (§4): normal betTurn nahi, FORCED side show =====
+        // All-in karte hi turn aage nahi badhta — pehle left wale se show hota hai.
+        // Aage ka turn allInSideShow khud schedule karta hai (chain khatam hone par).
+        else if (isFlipper && isAllInMove) {
+            await this.allInSideShow(io, matchData, userId)
         }
         // ===== BAAKI variants: ORIGINAL single-winner tail (untouched) =====
         else if (turnManager(matchData?.playersData, nextPlayerTurnId)) {
@@ -483,13 +566,17 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
             const previousWinnerSeatIndex = previousWinnerIndex(matchData, matchData?.previousWinner)
 
+            // sab pack ho gaye -> akela bacha hua hi winner; uske cards bhi bhej do.
+            const winnersCards = buildWinnersCards(matchData, [nextPlayerTurnId])
+            const winnerCards = winnersCards[0]?.cards || []
+
             console.log("::::::::::::::::::player1:::::", player1,)
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC,selfCoin: player?.coins });
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, winnerCards, winnersCards, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC,selfCoin: player?.coins });
             });
 
-            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: nextPlayerTurnId, winnerCards, winnersCards, player1, player2: {}, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
 
             matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: nextPlayerTurnId, end: true }, { new: true }).populate('players', 'name socketId coins').lean()
@@ -607,7 +694,7 @@ module.exports.seenCard = async (io, user, socketId, data) => {
         // hand ke resolved CARDS ka array bhejo (frontend sirf cards dikhata). All-in ho to
         // uske applicable jokers hi lagenge (getApplicableJokerValues), warna saare khule.
         let bestHand = []
-        if (matchData?.gameType === gameTypeConstant?.ZHANDU && Array.isArray(cards) && cards.length) {
+        if ((matchData?.gameType === gameTypeConstant?.ZHANDU || matchData?.gameType === gameTypeConstant?.FLIPPER) && Array.isArray(cards) && cards.length) {
             const selfData = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
             const jokerVals = getApplicableJokerValues(matchData, selfData)
             bestHand = evaluateBestHandWithJoker(cards, jokerVals)?.usedCards
@@ -635,11 +722,12 @@ module.exports.fetchBestHand = async (io, user, socketId, data = {}) => {
 
         const userId = user?._id
         const matchData = await matchSchema.model
-            .findOne({ players: userId, gameType: gameTypeConstant?.ZHANDU, start: true, end: false })
+            .findOne({ players: userId, gameType: { $in: [gameTypeConstant?.ZHANDU, gameTypeConstant?.FLIPPER] }, start: true,/* end: false */ })
             .sort({ createdAt: -1 })
             .lean()
 
-        if (!matchData) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "No active zhandu match found." });
+       // if (!matchData) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "No active zhandu/flipper match found." });
+        if (!matchData) return 
 
         const hasExited = (matchData?.exitPlayers || []).some(x => String(x) === String(userId))
         if (hasExited) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "You have exited this match." });
@@ -717,12 +805,17 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
 
         if (!show) {
 
-            // ZHANDU Section 6: side show tabhi allowed jab —
-            //   (a) teeno joker khul chuke ho, AUR
-            //   (b) requester (userId) ne kam se kam 1 SEEN move kiya ho.
             if (matchData?.gameType == gameTypeConstant?.ZHANDU) {
                 const allJokersOpen = (matchData?.jokerCards?.length || 0) > 0 && matchData.jokerCards.every(j => j?.opened)
                 if (!allJokersOpen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Side show allowed only after all 3 jokers are opened." });
+
+                const requester = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
+                if (!(requester?.seenMoves >= 1)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Side show allowed only after you make a seen move." });
+            }
+
+            else if (matchData?.gameType == gameTypeConstant?.FLIPPER) {
+                const allPlayersSeen = totalActivePlayers.every(x => x?.isSeen)
+                if (!allPlayersSeen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Side show allowed only after all players have seen their cards." });
 
                 const requester = matchData?.playersData?.find(x => String(x?.playerId) === String(userId))
                 if (!(requester?.seenMoves >= 1)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Side show allowed only after you make a seen move." });
@@ -745,17 +838,13 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             from["index"] = matchData?.seatPosition.find(x => String(x?.playerId) == String(userId))?.index ?? -1
             to["index"] = matchData?.seatPosition.find(x => String(x?.playerId) == String(playerId))?.index ?? -1
 
-            // TIMER: pehle yahan hardcoded `10` jaata tha, jo jhooth tha — side show ke liye
-            // koi alag job nahi hai; asli deadline requester ka chal raha 30s AUTO-PACK hai.
-            // Requester ne turn milne ke 25s baad show maanga to responder ke paas sach me
-            // 5s hain, 10 nahi. To job se hi bacha hua time nikaal ke bhejo — dono screen
-            // (requester ka turn timer + responder ka side show timer) ek hi ghadi pe chale.
-            //
-            // Ye deadline hard nahi hai: requester chahe to intezaar chhod ke seedha chaal/pack
-            // kar sakta hai (uska turn abhi bhi chal raha hai) — tab placeBetCore `sideShow`
-            // flag clear kar deta hai aur responder ka late jawab apne aap no-op ho jaata.
+        
             const remainingMs = await getAutoPackRemainingMs(matchData?._id)
             const sideShowTimer = remainingMs === null ? 10 : Math.max(0, Math.floor(remainingMs / 1000))
+
+            const timeoutMs = remainingMs === null ? 10000 : Math.max(0, remainingMs)
+            await cancelAutoPack(matchData?._id)
+            await scheduleFlow("sideShowTimeout", { matchId: String(matchData?._id), requesterId: String(userId), responderId: String(playerId) }, timeoutMs)
 
             matchData.players.forEach((player) => {
                 emitToUser(io, player?._id, socketEmit.sideShowRequest, { _id: matchData?._id, from, to, timer: sideShowTimer });
@@ -840,10 +929,14 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             // pot DOBARA credit hota, aur `startNextRound` dobara chal ke usi roomId ke liye
             // ek aur match + ek aur `startNext` job bana deta -> do matchStart, round jaldi
             // restart hota dikhta. Null aaya matlab round pehle hi khatam -> chup-chaap return.
-            const endedMatch = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: winnerId, end: true, ...(splitAmong ? { draw: true } : {}), ...(showOpenedJoker ? { jokerCards: matchData.jokerCards, movesRound: matchData.movesRound } : {}) }, { new: true }).populate('players', 'name socketId coins').lean()
-            if (!endedMatch) return
+            matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { winner: winnerId, end: true, ...(splitAmong ? { draw: true } : {}), ...(showOpenedJoker ? { jokerCards: matchData.jokerCards, movesRound: matchData.movesRound } : {}) }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
+            if (!matchData) return
 
           
+            // DRAW (zhandu split) me single winner nahi hota -> splitAmong ke sabke cards.
+            const winnersCards = buildWinnersCards(matchData, splitAmong && splitAmong.length ? splitAmong : [winnerId])
+            const winnerCards = winnersCards.find(x => String(x?.playerId) === String(winnerId))?.cards || []
+
             const showLooserId = splitAmong? "123xyz" : (totalActivePlayers.find(x => String(x?.playerId) !== String(winnerId))?.playerId || "123xyz")
             const sideShowWinnerPayload = { _id: matchData?._id, player1, player2, winnerId, looserId: showLooserId, isDraw, isFinalShow: true }
 
@@ -853,9 +946,9 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             this.sendCommonEmitForWatcher(io, matchData, socketEmit.sideShowWinner, sideShowWinnerPayload)
 
             matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
+                emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, winnerCards, winnersCards, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
             });
-            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
+            this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, player1, player2, winnerId, winnerCards, winnersCards, isDraw, splitAmong, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
             // Payout: ZHANDU draw -> pot equally split; warna winner ko pura pot.
             if (splitAmong) await splitPotEqually(splitAmong, matchData?.pot)
@@ -878,6 +971,45 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
         if (lockMatchId && lockToken) await releaseLock(lockMatchId, lockToken);
     }
 }
+
+// SIDE SHOW KA ANT — reject aur timeout, dono ka natija bilkul ek hai: show khatam aur
+// requester ki CHAAL lag jaati hai. Pehle ye code DO jagah copy tha (reject branch +
+// _flowSideShowTimeout) — ek jagah multiplier badalta aur doosri chhoot jaati, aisa khatra tha.
+//
+// Ye function TAALA NAHI LETA — placeBetCore jaisa hi, bulane wale ka taala maanta hai:
+//   respondToSideShow (reject) -> taala pehle se hai   -> seedha call
+//   _flowSideShowTimeout       -> pehle khud taala leta -> phir call
+const finishSideShow = async (io, matchData, requesterId, responderId) => {
+
+    // Client ke liye reject aur timeout me koi farq nahi — dono pe wahi popup band hota hai.
+    matchData.players.forEach((player) => {
+        emitToUser(io, player?._id, socketEmit.rejectSideShow, { _id: matchData?._id, from: responderId, to: requesterId });
+    });
+
+    // Requester ki minimum chaal — seen / previousWinner ka wahi multiplier.
+    const seenPlayer = matchData?.playersData?.find(x => String(x?.playerId) === String(requesterId))?.isSeen
+    const previousWinner = String(matchData?.previousWinner) === String(requesterId)
+
+    let currentBetAmount = matchData?.currentBetAmount
+    if (seenPlayer && previousWinner) currentBetAmount = currentBetAmount * 4
+    else if (seenPlayer || previousWinner) currentBetAmount = currentBetAmount * 2
+
+    // SAFETY: itne coins hi na bache to placeBetCore "Insufficient coins" pe return kar deta —
+    // aur auto-pack to side show request pe cancel ho chuka hai, matlab turn HAMESHA ke liye
+    // atak jaata. Aise me purana wala hi natija: PACK.
+    // (Zhandu me kam coins = ALL-IN, jo placeBetCore khud sambhal leta hai -> wahan pack nahi.)
+    const isZhandu = matchData?.gameType === gameTypeConstant?.ZHANDU
+    const requesterUser = await userSchema.model.findOne({ _id: requesterId }).select("coins").lean()
+
+    // `betAmount` DENA ZAROORI hai — placeBetCore ka pehla guard (!isPacked && !betAmount)
+    // warna wo turant return kar deta, chaal lagti hi nahi aur turn wahin atak jaata.
+    if (!isZhandu && Number(requesterUser?.coins || 0) < Number(currentBetAmount)) {
+        await placeBetCore(io, requesterId, null, { isPacked: true, betAmount: 0 }, matchData?._id);
+    } else {
+        await placeBetCore(io, requesterId, null, { isPacked: false, betAmount: currentBetAmount }, matchData?._id);
+    }
+}
+
 
 module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
@@ -919,7 +1051,7 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
         const totalPlayers = matchData?.playersData?.filter(x => !x?.isPacked && !x?.isAllIn) || [];
         if (totalPlayers?.length < 3) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "side Show not possible right now." });
 
-        await cancelAutoPack(matchData?._id);
+       // await cancelAutoPack(matchData?._id);
 
         console.log("::::::::::::::::::!333333333333 accept ")
 
@@ -977,13 +1109,27 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
                     x.turn = false
                 }
             })
+
+            // FLIPPER: side show haar ke pack hone wala bhi fold hi hai — uski cards se
+            // variable joker badal do.
+            let newJokers = null
+            if (matchData?.gameType === gameTypeConstant?.FLIPPER) {
+                const looser = matchData?.playersData?.find(x => String(x?.playerId) === String(looserId))
+                newJokers = replaceVariableJokers(matchData?.jokerCards, looser?.cards)
+                if (newJokers) matchData.jokerCards = newJokers
+            }
             // isPacked emit userId (responder) ke liye hai -> kya responder khud pack hua?
             const isPacked = String(looserId) === String(userId)
 
             matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id }, {
                 turn: nextPlayerTurnId, playersData: matchData?.playersData,
                 ...(requesterBet > 0 ? { $inc: { pot: requesterBet } } : {}),
+                ...(newJokers ? { jokerCards: newJokers } : {}),
             }, { new: true }).populate('players', 'name socketId coins').lean()
+
+            // FLIPPER: board flip hua -> sab ko naya board bhejo (update ke BAAD, taaki
+            // matchData me latest jokerCards ho).
+            if (newJokers) this.emitJokerOpened(io, matchData, matchData?.jokerCards?.[0], looserId)
 
             // BET DEBIT requester se — pot me jitna gaya, coins se utna hi kato.
             if (requesterBet > 0) {
@@ -1025,30 +1171,12 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
         } else {
 
-            matchData.players.forEach((player) => {
-                emitToUser(io, player?._id, socketEmit.rejectSideShow, { _id: matchData?._id, from: userId, to: otherPlayerId });
-            });
-
-            // Lock pehle se held hai -> placeBetCore call karo (locked placeBet nahi),
-            // warna same match ka taala dobara maangne se DEADLOCK ho jaata.
-            // `betAmount` DENA ZAROORI hai: placeBetCore ka pehla guard (!isPacked && !betAmount)
-            // warna turant return kar deta tha -> requester ka chaal lagta hi nahi, turn usi pe
-            // atka rehta, aur upar cancelAutoPack ho chuka hota -> match hamesha ke liye freeze.
-
-        const seenPlayer=matchData?.playersData?.find(x=>String(x?.playerId)===String(otherPlayerId))?.isSeen
-        const previousWinner=String(matchData?.previousWinner) === String(otherPlayerId)
-
-         let currentBetAmount= matchData?.currentBetAmount
-        if(seenPlayer && previousWinner )currentBetAmount=currentBetAmount*4
-        else if(seenPlayer || previousWinner)currentBetAmount=currentBetAmount*2
-
-
-            await placeBetCore(io, otherPlayerId, null, {
-                isPacked: false,
-                amount: currentBetAmount,
-                betAmount: currentBetAmount,
-            }, matchData?._id);
+            // Taala pehle se yahin held hai -> helper seedha call (wo khud taala nahi leta).
+            // otherPlayerId = matchData.turn = REQUESTER, userId = jisne reject kiya.
+            await finishSideShow(io, matchData, otherPlayerId, userId)
         }
+
+
 
 
     } catch (error) {
@@ -1056,6 +1184,184 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
     } finally {
         if (lockMatchId && lockToken) await releaseLock(lockMatchId, lockToken);
+    }
+}
+
+
+// ==================== FLIPPER: ALL-IN FORCED SIDE SHOW (PDF §4) ====================
+// Flipper me all-in move apne aap left-hand player ke saath side show ban jaata hai.
+// Ye asli side show (`sideShow` / `respondToSideShow`) se JAANBOOJH KE alag rakha gaya hai:
+//   - koi request nahi, koi accept/reject nahi, koi 10s timer nahi -> server khud compare karta hai
+//   - dono ko cards dekhni PADTI hain, blind ho to bhi -> dono isSeen ho jaate hain
+// Purane side show ka ek line bhi nahi chheda. Kal ko §4 ka koi rule badla to sirf yahi
+// function badlega — isliye saara §4 ka logic yahin ek jagah rakha hai.
+//
+// LOCK: ye `placeBetCore` ke andar se call hota hai jo pehle se match lock leke baitha hai.
+// Yahan lock DOBARA mat lena — apne aap se deadlock ho jayega (CLAUDE.md wali discipline).
+//
+// Abhi ek LINK handle hota hai (all-in vs left wala). Chain — left wala haara to agle left
+// se phir show — agla step hai; neeche TODO pe marker laga hai.
+module.exports.allInSideShow = async (io, matchData, allInPlayerId) => {
+    try {
+        const playersData = matchData?.playersData || []
+
+        // Jo abhi bhi hand me hain. Sirf PACKED bahar — all-in wale andar hi rehte hain
+        // (khud all-in player bhi, warna wo apni hi list se filter ho jaata aur target hi
+        //  na milta). All-in banda ab bet nahi kar sakta, par pot ka daavedar to hai hi.
+        const inHand = playersData.filter(x => !x?.isPacked)
+        const meIdx = inHand.findIndex(x => String(x?.playerId) === String(allInPlayerId))
+
+        // Koi saamne wala hi nahi bacha -> show ka sawaal hi nahi, seedha showdown.
+        if (meIdx === -1 || inHand.length < 2) return await resolveShowdown(io, matchData)
+
+        // "Left hand side" ka matlab wahi rakha hai jo existing side show me hai
+        // (`sideShowTurnManager` -> circular PREVIOUS player), taaki table pe do alag-alag
+        // concept na banein. Chain me bhi hum isi direction me aage badhenge.
+        const opponent = inHand[(meIdx - 1 + inHand.length) % inHand.length]
+        const me = inHand[meIdx]
+
+        // §4 (decision D6): forced show me dono ko cards dekhni PADTI hain -> isSeen true.
+        // `seenMoves` JAANBOOJH KE nahi badhaya — wo "seen hoke ek chaal kheli" ginta hai,
+        // aur usi pe §3 ki side-show eligibility tiki hai. Dekh lene se haq nahi mil jaata.
+        playersData.forEach(x => {
+            if (String(x?.playerId) === String(me?.playerId) || String(x?.playerId) === String(opponent?.playerId)) {
+                x.isSeen = true
+            }
+        })
+
+        // Compare — flipper ke chaaron joker wild ki tarah lagte hain (koi freeze nahi).
+        const { player1, player2, winner } = compareResult(me, opponent, {
+            gameType: matchData?.gameType,
+            jokerValue: matchData?.jokerCard?.cardValue,
+            jokerValues: getOpenedJokerValues(matchData)
+        })
+
+        // DRAW (decision D1): all-in wala haarta. Wajah — codebase me side show tie ka rule
+        // pehle se yahi hai (jisne show maanga wo haarta), aur forced show ka "maangne wala"
+        // effectively all-in player hi hai. Isse chain bhi pakke tor pe khatam ho jaati hai.
+        const looserId = String(winner) === "DRAW"
+            ? me?.playerId
+            : (String(winner) === String(me?.playerId) ? opponent?.playerId : me?.playerId)
+        const winnerId = String(looserId) === String(me?.playerId) ? opponent?.playerId : me?.playerId
+        const allInLost = String(looserId) === String(me?.playerId)
+
+        // Haarne wala fold. Decision D5: alag flag nahi, `isPacked` hi — poora system
+        // (buildSidePots ki eligibility, turnManager, active count) isi pe key karta hai.
+        playersData.forEach(x => {
+            if (String(x?.playerId) === String(looserId)) { x.isPacked = true; x.turn = false }
+        })
+
+        // §2: fold hua matlab uski cards hi naye variable joker. Fixed wala nahi badalta.
+        const looser = playersData.find(x => String(x?.playerId) === String(looserId))
+        const newJokers = replaceVariableJokers(matchData?.jokerCards, looser?.cards)
+
+        matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, {
+            playersData,
+            ...(newJokers ? { jokerCards: newJokers } : {}),
+        }, { new: true }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
+
+        // Round beech me hi khatam ho gaya (late/duplicate call) -> chup-chaap nikal jao.
+        if (!matchData) return
+        await setMatch(matchData)
+
+        // Cards sirf un DO ko jo show me the — baaki table ko sirf natija. Yahi rule
+        // `respondToSideShow` bhi follow karta hai, to client ko naya case nahi milega.
+        const result = { _id: matchData?._id, winnerId, looserId, isDraw: String(winner) === "DRAW", isForced: true, reason: "allInSideShow" }
+        const shownTo = [String(me?.playerId), String(opponent?.playerId)]
+        matchData.players.forEach((player) => {
+            const cards = shownTo.includes(String(player?._id)) ? { player1, player2 } : {}
+            emitToUser(io, player?._id, socketEmit.sideShowWinner, { ...cards, ...result })
+        })
+        this.sendCommonEmitForWatcher(io, matchData, socketEmit.sideShowWinner, result)
+
+        // Board flip — update ke BAAD bhejo taaki matchData me naya board ho.
+        if (newJokers) this.emitJokerOpened(io, matchData, matchData?.jokerCards?.[0], looserId)
+
+        // ===== Ab aage kya =====
+        const stillInHand = matchData.playersData.filter(x => !x?.isPacked)
+
+        // Ek hi bacha -> round wahin khatam. resolveShowdown side pots ke saath pot baant
+        // deta hai (1 eligible ho to bina compare ke wahi winner).
+        if (stillInHand.length <= 1) return await resolveShowdown(io, matchData)
+
+        // TODO (agla step — chain): agar all-in wala JEETA hai (allInLost === false) to §4
+        // kehta hai process khatam nahi hota — uska hand agle left active player se phir
+        // forced show me jaayega, aur tab tak jab tak wo haare ya sirf 2 bachein.
+        // Filhaal chain nahi hai: dono soorat me betting normal resume ho jaati hai.
+        if (!allInLost) console.log(":::::flipper all-in chain pending (left wala haara):::::", { matchId: String(matchData?._id), allInPlayerId: String(allInPlayerId) })
+
+        // Betting resume. Turn `placeBetCore` pehle hi agle bettor pe set kar chuka hai;
+        // par agar wahi banda abhi show me haar ke pack ho gaya to uske aage wale ko do.
+        let nextTurnId = matchData?.turn
+        const turnPd = matchData.playersData.find(x => String(x?.playerId) === String(nextTurnId))
+        if (!turnPd || turnPd?.isPacked || turnPd?.isAllIn) nextTurnId = nextBettorFrom(matchData.playersData, looserId)
+
+        // Koi bet karne wala hi nahi bacha (sab all-in) -> showdown.
+        if (!nextTurnId) return await resolveShowdown(io, matchData)
+
+        await matchSchema.model.updateOne({ _id: matchData?._id, end: false }, { turn: nextTurnId })
+        await deleteMatch(matchData?._id)   // turn badla -> cache stale, agla read fresh ho
+        await scheduleFlow("betTurn", { matchId: String(matchData?._id), playerTurnId: String(nextTurnId) }, FLIPPER_CHAIN_MS)
+
+    } catch (error) {
+        console.log("allInSideShow error =>", error.message)
+    }
+}
+
+// Agla BETTOR dhoondo, poori seat-order list pe chal ke. `turnManager` yahan kaam nahi
+// karta kyunki wo reference player ko bhi filtered list me dhoondta hai — aur hamara
+// reference (haara hua banda) tab tak pack ho chuka hota hai -> null milta.
+const nextBettorFrom = (playersData, fromPlayerId) => {
+    const list = playersData || []
+    const i = list.findIndex(x => String(x?.playerId) === String(fromPlayerId))
+    if (i === -1) return null
+    for (let step = 1; step <= list.length; step++) {
+        const p = list[(i + step) % list.length]
+        if (p && !p?.isPacked && !p?.isAllIn) return p?.playerId
+    }
+    return null
+}
+
+
+// SIDE SHOW TIMEOUT (BullMQ `sideShowTimeout` job) — requester ne side show maanga aur
+// responder ne bache hue time me kuch jawab hi nahi diya.
+// Natija reject se alag hai hi nahi: side show khatam, aur requester ki CHAAL lag jaati hai.
+// Har doosre raste (accept / reject / requester ne khud chaal-pack kar liya) me `sideShow`
+// flag clear ho chuka hota hai ya turn aage badh chuka hota hai -> ye job LATE hai, no-op.
+// Isliye job cancel karne ki zaroorat nahi (baaki flow jobs jaisa hi validate-on-fire).
+module.exports._flowSideShowTimeout = async (io, matchId, requesterId, responderId) => {
+
+    let lockToken = null;
+
+    try {
+        if (!matchId || !requesterId) return
+
+        // --- LOCK: placeBetCore bina taale ke chalta hai (caller ka taala maanta hai) ---
+        lockToken = await acquireLock(matchId)
+        if (!lockToken) return
+
+        // teeno condition abhi bhi wahi hon tabhi timeout valid hai:
+        //   sideShow: true      -> responder ne accept/reject nahi kiya
+        //   sideShowUser        -> usi responder ka jawab pending hai
+        //   turn: requesterId   -> requester ne khud koi chaal/pack nahi kiya
+        // (filter fail = koi na koi pehle act kar chuka -> chupchaap nikal jao.)
+        let matchData = await matchSchema.model.findOneAndUpdate(
+            { _id: matchId, start: true, end: false, sideShow: true, sideShowUser: responderId, turn: requesterId },
+            { sideShow: false, sideShowUser: null }
+        ).populate('players', 'name socketId coins').lean()
+        if (!matchData) return
+
+        // sideShow flag clear hua -> cache invalidate (placeBetCore fresh padhe).
+        await deleteMatch(matchData?._id)
+
+        // Taala upar le liya hai -> helper seedha call (wo khud taala nahi leta).
+        await finishSideShow(io, matchData, requesterId, responderId)
+
+       
+    } catch (error) {
+        console.log(error);
+    } finally {
+        if (lockToken) await releaseLock(matchId, lockToken);
     }
 }
 
@@ -1151,7 +1457,9 @@ module.exports._flowDealCards = async (io, matchId) => {
         console.log(":::::::betTurnDelay+++++++++++:::::::",betTurnDelay)
         // ZHANDU: J1 (first joker) ka jokerOpened emit betTurn se 2s PEHLE bhejo, taaki client
         // turn shuru hone se pehle joker khulta dikha sake. (J2/J3 to placeBet me khulte hi hain.)
-        if (match?.gameType == gameTypeConstant?.ZHANDU) {
+        // FLIPPER: chaaron joker pehle se khule hain, par client ko board dikhane ke liye
+        // wahi 2s-pehle wala reveal emit chahiye -> same job reuse (handler dono ko handle karta).
+        if (match?.gameType == gameTypeConstant?.ZHANDU || match?.gameType == gameTypeConstant?.FLIPPER) {
             await scheduleFlow("firstJoker", { matchId: String(match?._id) }, Math.max(0, betTurnDelay - 2000))
         }
 
@@ -1162,12 +1470,19 @@ module.exports._flowDealCards = async (io, matchId) => {
     }
 }
 
-module.exports.emitJokerOpened = (io, match, joker) => {
+// Board pe joker badla -> sab players + watchers ko batao.
+// `joker` = wo ek joker jo abhi khula (zhandu isi ko animate karta hai).
+// `foldedBy` sirf FLIPPER bhejta hai — kis bande ke fold se board flip hua.
+// jokerCards hamesha poora board hota hai, to flipper client wahi se chaaron padh leta hai.
+module.exports.emitJokerOpened = (io, match, joker, foldedBy = null) => {
     if (!match || !joker) return
+
+    const data = { jokerCards: match?.jokerCards, joker, movesRound: match?.movesRound, foldedBy }
+
     match.players.forEach((player) => {
-        emitToUser(io, player?._id, socketEmit.jokerOpened, { _id: match?._id, joker, jokerCards: match?.jokerCards, movesRound: match?.movesRound })
+        emitToUser(io, player?._id, socketEmit.jokerOpened, { _id: match?._id, ...data })
     })
-    module.exports.sendCommonEmitForWatcher(io, match, socketEmit.jokerOpened, { joker, jokerCards: match?.jokerCards, movesRound: match?.movesRound })
+    module.exports.sendCommonEmitForWatcher(io, match, socketEmit.jokerOpened, data)
 }
 
 module.exports._flowFirstJoker = async (io, matchId) => {
@@ -1176,6 +1491,9 @@ module.exports._flowFirstJoker = async (io, matchId) => {
         if (!match || match.end || !match.start) return
         const j1 = match?.jokerCards?.[0]
         if (!j1 || !j1.opened) return
+
+        // Flipper me chaaron joker khule hote hain, par emit ek hi jaata hai — payload ka
+        // jokerCards poora board rakhta hai, to client wahi se saare joker dikha deta hai.
         module.exports.emitJokerOpened(io, match, j1)
     } catch (e) {
         console.log("_flowFirstJoker error =>", e.message)
@@ -1235,9 +1553,10 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
 }
 
 
-module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
+module.exports.selfExit = async (io, user, socketId, disconnect = false,data = {}) => {
     console.log(":::: Self Exit :::: ",user?.name,user?._id,disconnect);
 
+    const {isLobby}=data
     // socketId filter jaan bujh ke: purane socket ka late disconnect naye connection ko na maare.
     const checkUser= disconnect?await userSchema.model.findOneAndUpdate({ _id: user?._id, socketId }, { socketId: null, disconnect: moment.utc().toDate() }).lean():await userSchema.model.findOne({ _id: user?._id, socketId }).lean()
 
@@ -1258,9 +1577,9 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
         matchSchema.model.updateMany({ players: user?._id, start: false, end: false }, {
             $pull: { players: user?._id, seatPosition: { playerId: user._id } }
         }),
-         matchSchema.model.updateMany({ previousWinner: user?._id, start: false, end: false }, {
-            previousWinner:null
-        }),
+        //  matchSchema.model.updateMany({ previousWinner: user?._id, start: false, end: false }, {
+        //     previousWinner:null
+        // }),
         matchSchema.model.updateMany({ watchers: user?._id }, {
             $pull: { watchers: user?._id },
         }),
@@ -1281,17 +1600,18 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false) => {
             userId: user?._id,
             index: exitIndex,
             previousWinnerSeatIndex:exitIndex==previousWinnerSeatIndex?-1:previousWinnerSeatIndex,
+            isLobby,
         }
 
         currentMatch.players.forEach((player) => {
             payload.selfUser = String(player?._id) === String(checkUser?._id)
-            emitToUser(io, player?._id, socketEmit.selfExitSuccess, payload)
+            if(payload.selfUser) emitToUser(io, player?._id, socketEmit.selfExitSuccess, payload)
         })
-        payload.selfUser = false
-        this.sendCommonEmitForWatcher(io, currentMatch, socketEmit.selfExitSuccess, payload)
+       // payload.selfUser = false
+       // this.sendCommonEmitForWatcher(io, currentMatch, socketEmit.selfExitSuccess, payload)
     }
     else if(!disconnect){
-        emitToUser(io, user?._id, socketEmit.selfExitSuccess, { _id: "_", roomId: "_", userId: user?._id, index: -1,selfUser:true })
+        emitToUser(io, user?._id, socketEmit.selfExitSuccess, { _id: "_", roomId: "_", userId: user?._id, index: -1,selfUser:true,isLobby })
     }
 
     return;
@@ -1405,8 +1725,8 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
         },
         {
             $sort:{
+                entryAmount:1,
                 createdAt:-1,
-                entryAmount:1
             }
         },
         {
@@ -1512,6 +1832,8 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
             return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins to join this table." });
         }
 
+        const previousWinner=String(room?.previousWinner)==String(userData?._id)?true:false
+
         // Check pass -> ab seat do.
         let matchData = await matchSchema.model.findOneAndUpdate({
             roomId,
@@ -1526,7 +1848,8 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
             {
                 $addToSet: { players: user?._id },
                 $push: { seatPosition: { playerId: user?._id, index } },
-                $pull: { watchers: user?._id }
+                $pull: { watchers: user?._id },
+                ...(previousWinner?{previousWinner:null}:{})
             },
             { new: true }
         ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').
