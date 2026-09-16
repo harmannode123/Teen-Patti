@@ -7,7 +7,7 @@ const gameSessionSchema = require("../../model/gameSession.model");
 const cardDeck = require("../../helper/card.json");
 const { turnManager, sideShowTurnManager, compareResult, parseMongoObjectId, checkIndex, getOpenedJokerValues, getApplicableJokerValues, buildSidePots, pickPotWinners, evaluateBestHandWithJoker, previousWinnerIndex, buildFlipperJokers, replaceVariableJokers } = require("../../helper/utils");
 const { acquireLock, releaseLock } = require("../../helper/lock.helper");
-const { emitToUser } = require("../../helper/emit.helper");
+const { emitToUser ,filterOnlineUsers} = require("../../helper/emit.helper");
 const { scheduleAutoPack, cancelAutoPack, scheduleFlow, getAutoPackRemainingMs } = require("../../helper/turnTimer.helper");
 const { getMatch, setMatch, deleteMatch } = require("../../helper/matchState.helper");
 const {notifyResult}=require('./user.controller')
@@ -1390,10 +1390,7 @@ module.exports.startNextRound = async (io, matchData) => {
         // Seat bhi chhod do, warna broke player ka seat blocked padha rehta hai.
         const seatedIds = players.map(x => String(x?._id))
 
-        let seatPosition = matchData.seatPosition.filter(x => {
-            //We can change this in  future only new player save the player array
-            if (x?.playerId && !exitPlayers.includes(String(x?.playerId)) && seatedIds.includes(String(x?.playerId))) return x
-        })
+       
 
         // Purane watchers + naye broke players (dedupe).
         const watchers = [...new Set([
@@ -1410,6 +1407,12 @@ module.exports.startNextRound = async (io, matchData) => {
             this.sendCommonEmitForWatcher(io, matchData, socketEmit.selfExitSuccess, payload)
         })
 
+
+        players= await filterOnlineUsers(io, players)
+        let seatPosition = matchData.seatPosition.filter(x => {
+            //We can change this in  future only new player save the player array
+            if (x?.playerId && !exitPlayers.includes(String(x?.playerId)) && players.includes(String(x?.playerId))) return x
+        })
 
         let [newMatch] = await Promise.all([
             matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
@@ -1452,7 +1455,8 @@ module.exports._flowDealCards = async (io, matchId) => {
 
         // Pehla betTurn ka delay (baad me per-player DYNAMIC karna ho to sirf yahi variable
         // badlo — neeche firstJoker uspe based hai).
-        const betTurnDelay =match?.players.length?(match.players.length*4)*1000: 20000
+        let betTurnDelay =match?.players.length?(match.players.length*4)*1000: 20000
+        betTurnDelay= betTurnDelay + 4000
 
         console.log(":::::::betTurnDelay+++++++++++:::::::",betTurnDelay)
         // ZHANDU: J1 (first joker) ka jokerOpened emit betTurn se 2s PEHLE bhejo, taaki client

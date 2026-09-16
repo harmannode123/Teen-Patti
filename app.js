@@ -101,7 +101,57 @@ mongoose.connect(mongoUrl)
             app.use(logger('dev'));
             app.use(express.json({ limit: '50mb' }));
             app.use(express.urlencoded({ extended: false }));
-            app.use('/public', express.static('public'));
+            // .unityweb files disk pe pehle se compressed hain (Decompression Fallback build).
+            // Content-Encoding header ke bina Unity loader inhe phone ke JS me decompress
+            // karta hai — iOS Safari ki memory limit me itna bada decompress + compile
+            // nahi samata, WebContent process kill -> blank iframe. Header lagane se
+            // browser native (streaming) decompress karta hai, JS-fallback ka memory
+            // spike hi nahi aata.
+            //
+            // 2026-08-31 se build BROTLI hai (pehle gzip) — file header se detect karte
+            // hain, hardcode nahi, taaki dev kal wapas gzip build de to bhi na toote.
+            // DHYAN: browser 'br' encoding sirf HTTPS pe accept karta hai (Accept-Encoding
+            // me br tabhi bhejta hai). Isliye header tabhi lagao jab client ne br manga
+            // ho — warna (http://IP se testing) header mat lagao, loader ka apna JS
+            // fallback decompress kar lega (dheema hai par chalta hai; real users
+            // https://api2.addaplay.com se aate hain jahan native br milega).
+            // Cache: build files immutable hain (naya build = naya content), pehle
+            // max-age=0 tha to har open pe 86MB revalidate hota tha.
+            const fs = require('fs');
+            const unitywebEncoding = (filePath) => {
+                try {
+                    const fd = fs.openSync(filePath, 'r');
+                    const head = Buffer.alloc(2);
+                    fs.readSync(fd, head, 0, 2, 0);
+                    fs.closeSync(fd);
+                    if (head[0] === 0x1f && head[1] === 0x8b) return 'gzip';
+                    return 'br'; // Unity ka doosra hi format brotli hai
+                } catch (e) { return null; }
+            };
+            app.use('/public', express.static('public', {
+                setHeaders: (res, filePath) => {
+                    if (filePath.endsWith('.unityweb')) {
+                        const enc = unitywebEncoding(filePath);
+                        const accepts = (res.req.headers['accept-encoding'] || '');
+                        if (enc === 'gzip' || (enc === 'br' && /\bbr\b/.test(accepts))) {
+                            res.setHeader('Content-Encoding', enc);
+                        }
+                        // ⚠️ .wasm.unityweb pe Content-Type: application/wasm MAT lagana.
+                        // Try kiya tha (2026-08-31, streaming compile ke liye) — iOS
+                        // WebKit pe instantiateStreaming br-encoded body ke saath beech
+                        // me fail hota hai aur Unity ka emscripten fallback default
+                        // "build.wasm" file fetch karta hai (jo hai hi nahi) -> 404 ->
+                        // loading 20% pe stuck. Android/desktop Chrome pe theek tha,
+                        // iOS pe game khulna hi band ho gayi thi. Isliye octet-stream
+                        // hi rehne do — loader ArrayBuffer se instantiate karta hai
+                        // (thoda dheema, par har jagah chalta hai).
+                        // Encoding request ke hisaab se badalta hai -> Vary zaroori,
+                        // warna beech ke cache galat encoding wali copy serve kar sakte hain.
+                        res.setHeader('Vary', 'Accept-Encoding');
+                        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+                    }
+                }
+            }));
             app.use('/api/v1', v1Routes);
             app.use("/swagger", swaggerUI.serve, swaggerUI.setup(swaggerFile));
 
