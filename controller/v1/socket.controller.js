@@ -24,7 +24,7 @@ module.exports.socketController = (io) => {
         userController.notifySessionActive(user);
 
 
-        //gameplayController.selfExit(io, user, socketId, false)
+        gameplayController.resyncMatch(io, user, socketId, {})
 
         // Join room (online or friend)
         // socket.on(socketEmit.joinRoom, async (data) => gameplayController.joinRoom(io, user, socketId, data));

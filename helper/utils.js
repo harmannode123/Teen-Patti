@@ -555,6 +555,13 @@ module.exports.previousWinnerIndex = (matchData, playerId) => {
     let index = seat?.index ?? -1
     return index
 }
+module.exports.isUserExitInMatch = (matchData, playerId) => {
+    if (!Array.isArray(matchData?.exitPlayers)) return false;
+
+    return matchData.exitPlayers.some(
+        x => String(x) === String(playerId)
+    );
+};
 
 
 

@@ -140,7 +140,7 @@ const startTurnWorker = () => {
                 case "autopack":
                     // 30s tak action nahi -> current turn player ko auto-pack.
                     // placeBet khud lock + turn validate karta hai (already khela to no-op) -> safe.
-                    await gameplay.placeBet(io, d.playerTurnId, null, { isPacked: true, amount: 0 });
+                    await gameplay.placeBet(io, d.playerTurnId, null, { isPacked: true, amount: 0 ,betAmount:0 });
                     break;
                 case "betTurn":
                     // Next player ka turn emit + 30s auto-pack schedule.
