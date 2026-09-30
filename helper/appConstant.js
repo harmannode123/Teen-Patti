@@ -192,7 +192,10 @@ module.exports.gameTypeConstant = {
     TWO_CARD: "twocard",
     ZHANDU: "zhandu",
     FLIPPER:"flipper",
+    Variation:"variation",
 }
+
+module.exports.variationGameList=["teenpatti","zhandu","flipper"]
 
 // Operator ko jaane wale callback ka type. Operator isi se pehchanta hai ki
 // ye session shuru hone ka info hai ya session ka final result.
@@ -212,7 +215,7 @@ module.exports.zhanduConfig = {
 // Default rooms seeded on server start (see mongoose.helper -> createDefaultAdmin)
 module.exports.roomList = [
     {
-        name: "Simple Teen Patti",
+        name: "Teen Patti",
         gameType: "teenpatti",
         minEntry: 10000,
         maxEntry: 1000000

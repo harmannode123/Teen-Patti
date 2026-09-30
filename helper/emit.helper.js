@@ -23,11 +23,16 @@ const emitToUser = (io, userId, event, data) => {
 // Redis gir jaye to sab offline gine jaayenge — chalega, kyunki Redis ke bina to
 // BullMQ, lock aur match cache bhi band hi pade hain. Throw nahi karte, warna poora
 // startNextRound hi ruk jaayega.
+//
+// ⚠️ `allSockets()` MAT use karna: @socket.io/redis-adapter v8 `sockets()` override nahi
+// karta, to wo sirf ISI process ke sockets deta hai. PM2 ke 2 instances pe teen bande
+// connected the, par har process ko sirf apne wale online dikhe -> startNextRound ne
+// baaki ko naye match se nikaal diya. `fetchSockets()` adapter se saare nodes se poochta hai.
 const isUserOnline = async (io, userId) => {
     if (!userId) return false;
     try {
-        const sockets = await io.in(userRoom(userId)).allSockets();
-        return sockets.size > 0;
+        const sockets = await io.in(userRoom(userId)).fetchSockets();
+        return sockets.length > 0;
     } catch (err) {
         console.error("isUserOnline failed =>", err && err.message);
         return false;
@@ -35,12 +40,20 @@ const isUserOnline = async (io, userId) => {
 };
 
 // List me se sirf live wale ids (string) wapas. Ids ya player objects, dono chalte hain.
+// Ek hi fetchSockets saare user rooms pe — har user ke liye alag cluster round-trip nahi.
 const filterOnlineUsers = async (io, userIds = []) => {
     if (!Array.isArray(userIds) || !userIds.length) return [];
 
     const ids = userIds.filter(Boolean).map((x) => String(x._id || x));
-    const flags = await Promise.all(ids.map((id) => isUserOnline(io, id)));
-    return ids.filter((_, i) => flags[i]);
+    try {
+        const sockets = await io.in(ids.map(userRoom)).fetchSockets();
+        const online = new Set();
+        sockets.forEach((s) => s.rooms.forEach((r) => online.add(r)));
+        return ids.filter((id) => online.has(userRoom(id)));
+    } catch (err) {
+        console.error("filterOnlineUsers failed =>", err && err.message);
+        return [];
+    }
 };
 
 module.exports = { userRoom, emitToUser, isUserOnline, filterOnlineUsers };

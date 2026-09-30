@@ -18,12 +18,23 @@ Deck ka shuffled copy return karta hai (Fisher–Yates). Original array mutate n
 ### `sortPlayerAccSeat(matchData)`
 Match ke players ko unke seat-index (`checkIndex`) ke hisaab se ascending order me sort karke return karta hai. Invalid index (< 0) wale players filter ho jaate hain.
 
+### `pickWinnerRank(winnersCards, winnerId)`
+`roundWinner` payload ka top-level `winnerRank` nikaalta hai — main winner ke hand ka naam (`"Trail"`, `"Pure Sequence"`, `"Sequence"`, `"Color"`, `"Pair"`, `"High Card"`). Draw (zhandu split) me `winnerId` null hota hai, par dono hand barabar hote hain → pehle winner ka rank hi return hota hai. Har `roundWinner` emit (showdown, fold-win, final show — players + watchers) me `winnerRank` jaata hai.
+
 ### `buildWinnersCards(matchData, winnerIds = [])`
-Diye gaye winner ids ke liye `[{ playerId, index, name, cards }]` banata hai (ids dedupe hote hain — multi-pot me ek hi player kai pot jeet sakta hai). Isse **teeno round-end paths** ka `roundWinner` payload ek jaisa rehta hai: har emit me ab `winnerCards` (main winner ke cards, draw pe `null`) aur `winnersCards` (sab winners ka detail) jaata hai. Pehle winner ke cards har branch me alag shape me aate the — showdown me `reveal` map, fold-win me `player1`, show me `player1`/`player2` — to client ko teen jagah dekhni padti thi.
+Har entry me `rank` bhi hota hai (hand ka naam, `getHandRankName` se — `utils.js`). Jokers per-player lagte hain (`getApplicableJokerValues`), to zhandu all-in wale ka rank unhi freeze hue jokers se banta hai jinse wo jeeta.
+
+Diye gaye winner ids ke liye `[{ playerId, index, name, cards, rank }]` banata hai (ids dedupe hote hain — multi-pot me ek hi player kai pot jeet sakta hai). Isse **teeno round-end paths** ka `roundWinner` payload ek jaisa rehta hai: har emit me ab `winnerCards` (main winner ke cards, draw pe `null`) aur `winnersCards` (sab winners ka detail) jaata hai. Pehle winner ke cards har branch me alag shape me aate the — showdown me `reveal` map, fold-win me `player1`, show me `player1`/`player2` — to client ko teen jagah dekhni padti thi.
 
 ---
 
 ## ZHANDU helpers
+
+### `isRoundComplete(matchData, justActedId)`
+**COMMON — sab variants.** Betting ka ek chakkar poora hua ya nahi (seat-order ka aakhri bettor khel chuka). Isi se match ka `round` key `$inc` hota hai. Zhandu ke `isZhanduRoundComplete` se JAANBOOJH KE alag function hai — zhandu wala joker kholne ke liye hai aur use chheda nahi gaya.
+- `round` 1 se shuru hota hai (`startMatch` set karta hai) = abhi kaunsa chakkar chal raha hai.
+- Ye `placeBetCore` me badhta hai (chaal / pack / all-in / autopack / side show reject + timeout sab isi se guzarte hain) aur `respondToSideShow` ke **accept** branch me bhi — wahan requester ka turn `placeBetCore` ke bina khatam hota hai.
+- `round` aur `movesRound` alag hain: `movesRound` joker ka index hai (2 pe ruk jaata), `round` seedhi ginti hai.
 
 ### `isZhanduRoundComplete(matchData, justActedId)`
 PDF Section 2: "round of moves" complete hua ya nahi (button store kiye bina). Tareeka: abhi ke ACTIVE (`isPacked=false`) players ko seat-index se sort karo. Jo abhi khela (`justActedId`) agar is list ka AAKHRI player tha → ek round poora ho gaya.
@@ -31,11 +42,14 @@ PDF Section 2: "round of moves" complete hua ya nahi (button store kiye bina). T
 - Fold hone par "last active" naturally agle player par shift ho jaata → PDF ka "button fold ho chuka to right-of-button tak" wala case bhi isi se cover ho jaata.
 - All-in player bet nahi karta → use bhi skip karo (par abhi jisne act kiya usko include karo, chahe wo fold/all-in ho).
 
-### `creditWinnerPot(winnerId, pot)`
-Round end pe winner ko poora pot ke coins credit karta hai (classic + zhandu dono). Safety: winner "DRAW" / null / invalid id ho to skip (draw-split alag se handle hota hai).
+### `takeCommission(matchId, pot)` — module-private
+House commission: `Math.floor(pot × COMMISSION_PERCENT / 100)` (abhi 5%) match ke `commission` key me `$inc` karta hai aur **bacha hua amount wapas** deta hai (100 → 95 wapas, 5 commission). `$inc` isliye ki side pots me ek match pe kai baar credit hota hai. Floor ki wajah se chhote pot (< 20) pe commission 0. Dono credit helpers isi se guzarte hain — commission ka rule badalna ho to sirf yahin.
 
-### `splitPotEqually(playerIds, pot)`
-ZHANDU DRAW (PDF Section 8): pot ko diye gaye players me EQUALLY baanta hai. Odd pot ka bacha hua 1-1 coin shuru ke players ko de deta hai → total exact rahe (koi coin gum/inflate na ho). Show aur All-In Show dono ke draw me kaam aata hai.
+### `creditWinnerPot(winnerId, pot, matchId)`
+Round end pe winner ko pot ke coins credit karta hai (classic + zhandu dono) — **commission kaat ke** (`takeCommission`). Safety: winner "DRAW" / null / invalid id ho to skip (draw-split alag se handle hota hai) — us soorat me commission bhi nahi katta.
+
+### `splitPotEqually(playerIds, pot, matchId)`
+ZHANDU DRAW (PDF Section 8): pot ko diye gaye players me EQUALLY baanta hai — pehle poore pot se commission katta hai (`takeCommission`), phir bacha hua baant-ta hai. Odd pot ka bacha hua 1-1 coin shuru ke players ko de deta hai → total exact rahe (koi coin gum/inflate na ho). Show aur All-In Show dono ke draw me kaam aata hai.
 
 ---
 
@@ -46,6 +60,8 @@ Match ko start karta hai: players ko seat se sort, boot amount economy me deduct
 
 ### `sendBetTurnEmit(io, currentPlayerTurnId, matchData)` — module-private
 Current player ko `betTurn` emit karta hai (players + watchers dono ko), side-show enable flag compute karta hai, aur 30s turn timer ke liye BullMQ auto-pack job schedule karta hai (cluster-safe + crash-safe).
+
+`showEnable` (side show button) tabhi `true` jab **teeno** shartein poori hon: (1) 2 se zyada active bettors (`!isPacked && !isAllIn`) — 2 bache to `isShow` (final show) hai, side show nahi; (2) saare active bettors seen ho chuke hon; (3) itne betting chakkar poore ho chuke hon — classic variants (teenpatti/muflis/joker/fourcard/twocard) me 3, zhandu/flipper me 5. Chakkar `match.round` se ginte hain (1 se shuru, har poore round pe ++), to "3 ke baad" = `round > 3`. Purani zhandu (teeno joker khule) / flipper (seenMoves) wali shartein hata di gayi hain.
 
 ### `resolveShowdown(io, matchData)` — module-private
 **ALL-IN / SHOWDOWN (Phase 5):** hand khatam → side pots banao, har pot ka winner (per-player jokers se) nikaalo, credit karo, `pots[]` save, match end, agla round. Ye fold-win (1 contender) AUR all-in showdown (multi contender) dono handle karta — `buildSidePots` 1-eligible pot bhi bana deta (uncontested → us player ko wapas/jeet). Arrow function isliye `this` = `module.exports` (`sendCommonEmitForWatcher`/`startNextRound` reach karne ke liye). `roundWinner` payload me `reveal` (sab non-folded ke cards) ke saath `winnerCards`/`winnersCards` (`buildWinnersCards` se — har pot ka winner) bhi jaata hai.
@@ -83,7 +99,9 @@ Guards: match na mile → error; player `exitPlayers` me ho → error; cards dis
 ## Side show
 
 ### `sideShow(io, user, socketId, data = {})` — exported
-Side show / final show handle karta hai. 2 active players bache to FINAL SHOW (compare → winner/draw), warna SIDE SHOW request bheji jaati hai. ZHANDU Section 6: side show tabhi allowed jab teeno joker khul chuke ho AUR requester ne kam se kam 1 seen move kiya ho. ZHANDU Section 7: 2-player show pe button-side requester ho to agla band joker khulta hai. DRAW handling: classic me requester haarta, zhandu me pot split. LOCK leta hai.
+Side show / final show handle karta hai. 2 active players bache to FINAL SHOW (compare → winner/draw), warna SIDE SHOW request bheji jaati hai.
+
+**SHOW / SIDE SHOW ka CHAAL request ke waqt hi katta hai — `if (show)` branch se PEHLE, yani final show aur side show DONO me:** requester ki chaal = `currentBetAmount` × seen/previousWinner multiplier (seen x2, previousWinner x2, dono x4 — wahi jo `sendBetTurnEmit` me hai). Requester ke paas poori chaal ke coins na hon to kuch kaatne se pehle hi `errorLog` ("Show not possible. You don't have enough balance for side show.") aur return — turn wahin rehta hai, auto-pack timer chalta rehta hai (pot = actually debited, economy net-zero). Sirf do query: requester ke coins `$inc -requesterBet` aur match ka `pot` `$inc +requesterBet` — uske baad hi show (compare → pot credit, jisme ye chaal shamil hai) ya side show (`respondToSideShow(accept: true)`) chalta hai. Jaan-boojh ke simple rakha hai: `totalBet`/`seenMoves` nahi badhte aur alag `successPlaceBet` emit nahi jaata (pot agle emit me dikhta hai). Accept branch me ab koi charge nahi. ZHANDU Section 6: side show tabhi allowed jab teeno joker khul chuke ho AUR requester ne kam se kam 1 seen move kiya ho. ZHANDU Section 7: 2-player show pe button-side requester ho to agla band joker khulta hai. DRAW handling: classic me requester haarta, zhandu me pot split. LOCK leta hai.
 
 Request branch ka `timer` **hardcoded nahi** hai — `getAutoPackRemainingMs(matchId)` se requester ke chal rahe 30s auto-pack ka bacha hua time bheja jaata hai (job hi asli deadline hai). Wahi bacha hua time le kar request branch **auto-pack CANCEL karke uski jagah `sideShowTimeout` job** lagata hai (`{ matchId, requesterId, responderId }`). Wajah: pehle deadline khatam hone par requester ka auto-pack fire hota tha — yani responder ki khamoshi ki saza requester ko FOLD ke roop me milti thi, jabki usne chaal lagane ke liye hi show maanga tha. Ab timeout par side show reject maan liya jaata hai aur requester ki CHAAL lag jaati hai (`_flowSideShowTimeout` dekho). Client ka timer nahi badla — dono ek hi ghadi pe chalte hain.
 
@@ -114,7 +132,7 @@ nikaal ke ek kar diya.
 
 ### `respondToSideShow(io, user, socketId, data = {})` — exported
 Side show ke response (accept/reject) ko handle karta hai.
-- **accept:** dono ke cards compare, looser pack (DRAW pe requester pack — PDF Section 8), turn aage, next betTurn schedule. Requester ka **CHAAL bhi yahan charge hota hai** (`currentBetAmount` → uske `totalBet` + `pot`, coins se debit, uske liye alag `successPlaceBet` emit). Pehle sirf reject branch charge karta tha → accept pe requester ko muft ka turn milta tha aur pot opponent ke jawab pe depend karta tha. Coins kam pade to jitne bache utne hi kate (pot = actually debited, economy net-zero).
+- **accept:** dono ke cards compare, looser pack (DRAW pe requester pack — PDF Section 8), turn aage, next betTurn schedule. Requester ka chaal **yahan charge NAHI hota** — wo `sideShow()` me request ke waqt hi kat chuka hai (neeche dekho); yahan dobara kaata to double charge. (Pehle accept branch me flat `currentBetAmount` katta tha, seen/blind ka farq nahi tha.)
 - **reject:** poora kaam `finishSideShow(io, matchData, otherPlayerId, userId)` karta hai (`otherPlayerId` = `matchData.turn` = requester, `userId` = jisne reject kiya). Taala yahan pehle se held hai aur helper khud taala nahi leta — isliye seedha call, deadlock nahi.
 
 LOCK leta hai; `placeBetCore` ko already-held lock ke saath call karta hai.

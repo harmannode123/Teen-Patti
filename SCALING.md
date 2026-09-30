@@ -320,6 +320,23 @@ websocket-only hi rahega.
 
 ---
 
+## 🛡️ Redis outage circuit-breaker (24 Aug 2026 incident)
+
+**Kya hua tha:** disk full → Redis RDB save fail → MISCONF (saare writes reject) → BullMQ
+workers har failed operation par turant retry → hot loop → **CPU 120%** bina kisi user ke.
+
+**Fix (`helper/redisGuard.helper.js`):**
+- Teeno BullMQ workers (turn/settlement/callback) guard me register hote hain.
+- Redis-outage error (MISCONF/READONLY/ECONNREFUSED...) dikhi → saare workers **PAUSE** (retry storm band).
+- Har 5s ek **WRITE probe** (PING nahi — MISCONF me reads pass, sirf writes fail hote hain).
+- Probe pass → workers **auto-RESUME**. BullMQ jobs Redis me hi pade rehte hain, to kaam wahin se aage badhta hai.
+- `app.js`: `subClient` (adapter duplicate) par error listener — pehle iski unhandled error process crash karti thi; plus rate-limited `unhandledRejection` handler (log spam se disk/CPU bachao).
+
+**Accepted trade-off:** Redis crash me agar data uda (delayed jobs gayab) to chal raha match freeze
+ho sakta hai — recovery deliberately nahi banayi, aisa match off kar denge.
+
+---
+
 ## 🧪 Testing reminders
 
 - Code change ke baad server restart: `npm run dev`.

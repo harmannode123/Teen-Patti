@@ -19,6 +19,7 @@ connection.on("error", (err) => { console.log("callback redis error =>", err.mes
 
 const QUEUE_NAME = "callback";
 const SWEEP_MS = 60 * 1000;          // sweep har 10 sec — result callback jaldi pahunchana hai
+const SWEEP_SCHEDULER_ID = "callback-sweep"; // BullMQ job scheduler ki fixed id
 const RETRY_GAP_MS = 5 * 60 * 1000;  // par ek doc ko 5 min me ek hi baar try karenge
 // Operator usi machine pe chal raha hai -> ye loopback call hai, microseconds ki baat.
 // 3s se zyada lag raha hai matlab operator hang hai, aur wait karne ka faayda nahi.
@@ -110,20 +111,21 @@ const startCallbackWorker = async () => {
     // Redis outage me worker pause / recovery pe auto-resume (redisGuard.helper dekho).
     registerWorker("callback-worker", worker);
 
-    // SWEEP_MS badalne se purana schedule Redis me chipka rehta hai aur wo BHI firing
-    // karta rehta hai (repeat key me interval baked hai -> naya interval = nayi key).
-    // Isliye add se pehle mismatched intervals wale schedules hata do.
-    const existingRepeats = await callbackQueue.getRepeatableJobs();
-    for (const job of existingRepeats) {
-        if (Number(job.every) !== SWEEP_MS) await callbackQueue.removeRepeatableByKey(job.key);
+    // Pehle add({ repeat }) use hota tha — BullMQ v5 me wo deprecated hai, v6 me hat jayega
+    // (getRepeatableJobs / removeRepeatableByKey bhi). Uski key interval se bani hash thi,
+    // isliye Redis me purana schedule (e.g. "7329d3...") pada reh sakta hai. Fixed id ke
+    // alawa jo bhi schedule mile hata do, warna purana + naya dono fire karke sweep double hoga.
+    // Hata hua schedule worker dobara nahi banata (updateJobScheduler ZSCORE check karta hai).
+    const schedulers = await callbackQueue.getJobSchedulers();
+    for (const s of schedulers) {
+        if (s.key !== SWEEP_SCHEDULER_ID) await callbackQueue.removeJobScheduler(s.key);
     }
 
-    // Repeatable job. Saare instances yahi add karte hain par Redis repeat key se dedupe
-    // ho jaata hai -> ek hi schedule banti hai.
-    await callbackQueue.add("sweep", {}, {
-        repeat: { every: SWEEP_MS },
-        removeOnComplete: true,
-        removeOnFail: true,
+    // Fixed id -> saare PM2 instances same schedule ko upsert karte hain, ek hi banti hai.
+    // SWEEP_MS badla to isi id pe interval replace ho jaata hai, alag schedule nahi banta.
+    await callbackQueue.upsertJobScheduler(SWEEP_SCHEDULER_ID, { every: SWEEP_MS }, {
+        name: "sweep",
+        opts: { removeOnComplete: true, removeOnFail: true },
     });
 
     console.log("----- Callback worker started. -----");

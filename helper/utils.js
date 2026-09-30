@@ -384,6 +384,16 @@ const resolvePlayerHand = (dealtCards, matchContext = {}) => {
     return evaluateBestHand(dealtCards)
 }
 
+// roundWinner payload me winner ke hand ka RANK NAAM ("Trail", "Pure Sequence",
+// "Sequence", "Color", "Pair", "High Card") bhejne ke liye. Wahi resolvePlayerHand
+// use hota hai jo winner decide karta hai -> client ko dikhne wala rank aur asli
+// comparison kabhi alag nahi ho sakte (joker/zhandu/flipper ke wild bhi isi me lagte).
+// Cards na mile to null — evaluateHand khali cards pe crash karta hai.
+module.exports.getHandRankName = (dealtCards, matchContext = {}) => {
+    if (!dealtCards?.length) return null
+    return resolvePlayerHand(dealtCards, matchContext)?.name || null
+}
+
 // Compare two evaluated hands honoring the variant's ranking direction.
 // Muflis reverses the ranking (weakest normal hand wins), so we flip the normal
 // comparison. Returns > 0 if handA wins, < 0 if handB wins, 0 = draw.

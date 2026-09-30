@@ -173,6 +173,13 @@ const matchSchema = mongoose.Schema({
         type: Number,
         default: 0
     },
+    // Is match me winner(s) ke jeete hue amount se kata hua house commission (5%).
+    // Round end pe credit ke waqt `$inc` hota hai (gameplay.controller -> takeCommission).
+    // pot = winners ko mila + commission.
+    commission: {
+        type: Number,
+        default: 0
+    },
     // Match start pe PER-USER kitna boot liya gaya (e.g. sabse 1000 -> bootAmount = 1000).
     // Baad me pata chal sake ki is match ka starting boot kitna tha.
     bootAmount: {
@@ -216,6 +223,9 @@ const matchSchema = mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "user",
     },
+    // Sab variants: abhi betting ka kaunsa chakkar chal raha hai (1 se shuru).
+    // Seat-order ka aakhri bettor khel le -> ++ (gameplay.controller -> isRoundComplete).
+    // Zhandu ke `movesRound` se alag — wo joker ka index hai, ye seedhi ginti.
     round: {
         type: Number,
         default: 1
