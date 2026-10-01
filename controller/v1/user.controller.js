@@ -6,7 +6,8 @@ const utils = require('../../helper/utils');
 const { responseStatus, callbackType } = require('../../helper/appConstant');
 const { default: mongoose } = require('mongoose');
 const axios = require('axios');
-const { tryCatch } = require('bullmq');
+const matchHistorySchema = require("../../model/matchHistory.model");
+
 
 // TEMPORARY (testing phase) — filhaal sirf in userIds ka game launch hoga, baaki sab 403.
 // String rakhi hai jaan-boojh ke: request me userId string aata hai (validation bhi
@@ -127,8 +128,8 @@ module.exports.gameHistory = async (req, res, next) => {
         const [total, matches] = await Promise.all([
             // BUG FIX: start:true `players: { $in }` ke ANDAR tha -> Mongo "unknown
             // operator: $start" error deta. Ye query-level field hai, bahar hona chahiye.
-            matchSchema.model.countDocuments({ players: { $in: sessionIds }, start: true }),
-            matchSchema.model
+            matchHistorySchema.model.countDocuments({ players: { $in: sessionIds }, start: true }),
+            matchHistorySchema.model
                 .find({ players: { $in: sessionIds }, start: true })
                 .sort({ createdAt: -1 })
                 .skip(offset)

@@ -42,14 +42,17 @@ PDF Section 2: "round of moves" complete hua ya nahi (button store kiye bina). T
 - Fold hone par "last active" naturally agle player par shift ho jaata → PDF ka "button fold ho chuka to right-of-button tak" wala case bhi isi se cover ho jaata.
 - All-in player bet nahi karta → use bhi skip karo (par abhi jisne act kiya usko include karo, chahe wo fold/all-in ho).
 
-### `takeCommission(matchId, pot)` — module-private
-House commission: `Math.floor(pot × COMMISSION_PERCENT / 100)` (abhi 5%) match ke `commission` key me `$inc` karta hai aur **bacha hua amount wapas** deta hai (100 → 95 wapas, 5 commission). `$inc` isliye ki side pots me ek match pe kai baar credit hota hai. Floor ki wajah se chhote pot (< 20) pe commission 0. Dono credit helpers isi se guzarte hain — commission ka rule badalna ho to sirf yahin.
+### `takeCommission(pot)` — module-private
+Pure math: `Math.floor(pot × COMMISSION_PERCENT / 100)` (`.env` ka `COMMISSION_PERCENT`, na ho to 5) wapas deta hai — DB ko haath nahi lagata (pehle ye khud `$inc` karta tha, ab wo `recordPayout` me hai). Floor ki wajah se chhote pot (< 20) pe commission 0. Commission ka rule badalna ho to sirf yahin.
 
-### `creditWinnerPot(winnerId, pot, matchId)`
-Round end pe winner ko pot ke coins credit karta hai (classic + zhandu dono) — **commission kaat ke** (`takeCommission`). Safety: winner "DRAW" / null / invalid id ho to skip (draw-split alag se handle hota hai) — us soorat me commission bhi nahi katta.
+### `recordPayout(matchId, entries, commission)` — module-private
+Match pe commission `$inc` + winners ka breakdown `payouts[]` me `$push` — **EK updateOne me**. `entries` = `[{ playerId, amount, commission, potNo }]`. House ledger (`helper/houseLedger.helper.js → saveHouseLedger`) isi `payouts[]` se banta hai, isliye credit aur record kabhi alag nahi hote. `$push` isliye ki side pots me ek match pe kai baar credit hota hai.
 
-### `splitPotEqually(playerIds, pot, matchId)`
-ZHANDU DRAW (PDF Section 8): pot ko diye gaye players me EQUALLY baanta hai — pehle poore pot se commission katta hai (`takeCommission`), phir bacha hua baant-ta hai. Odd pot ka bacha hua 1-1 coin shuru ke players ko de deta hai → total exact rahe (koi coin gum/inflate na ho). Show aur All-In Show dono ke draw me kaam aata hai.
+### `creditWinnerPot(winnerId, pot, matchId, potNo = null)`
+Round end pe winner ko pot ke coins credit karta hai (classic + zhandu dono) — **commission kaat ke**. User `$inc` aur `recordPayout` `Promise.all` me saath. Safety: winner "DRAW" / null / invalid id ho to skip (draw-split alag se handle hota hai) — us soorat me commission bhi nahi katta, payout bhi nahi.
+
+### `splitPotEqually(playerIds, pot, matchId, potNo = null)`
+ZHANDU DRAW (PDF Section 8) + all-in side pots: pot ko diye gaye players me EQUALLY baanta hai — pehle poore pot se commission katta hai, phir bacha hua baant-ta hai. Odd pot ka bacha hua 1-1 coin shuru ke players ko de deta hai → total exact rahe (koi coin gum/inflate na ho). **Commission bhi usi tarah (equal + remainder) winners pe record hota hai**, taaki `payouts[]` me sum(amount) + sum(commission) == pot exact ho. `resolveShowdown` har pot ka `potNo` pass karta hai.
 
 ---
 
@@ -155,7 +158,9 @@ Flipper me all-in move apne aap **left-hand player ke saath forced side show** b
 Poori seat-order list pe aage chal ke pehla non-packed, non-all-in player deta hai. `turnManager` yahan kaam nahi karta kyunki wo reference player ko bhi **filtered** list me dhoondta hai — haara hua banda tab tak pack ho chuka hota hai to `null` milta.
 
 ### `startNextRound(io, matchData)` — exported
-Round khatam hone ke baad agla match doc create karta hai (roomId, gameType, variation, bootAmount, previousWinner ke saath). Exit players ko filter karta hai.
+Round khatam hone ke baad agla match doc create karta hai (roomId, gameType, variation, bootAmount, vMode, previousWinner ke saath). Exit players ko filter karta hai.
+
+**History copy + house ledger + delete (sabse last):** naya match ban ke `startNext` job schedule hone ke baad, end ho chuke match ka **ditto copy** `matchHistory` table me jaata hai (`model/matchHistory.model.js` — match schema ka `clone()`, same `_id`), `saveHouseLedger(endedMatch)` se `houseLedger` entry banti hai (pot, commission = house profit, winners[] with amount/commission — sab `payouts[]` se), aur wo doc `match` table se `deleteOne` hota hai — teeno `Promise.all` me. Doc Mongo se fresh `.lean()` uthta hai kyunki `matchData` populated snapshot hota hai. Apna alag try/catch hai — fail ho to bhi agla round nahi rukta.
 
 **Session filter:** coins wali DB query `sessionClosed: false` pe hai — jiska session close ho chuka (3 min disconnect ke baad `closeSession` job) wo agle round me **bilkul nahi aata**: na player, na watcher. Pehle aisa player coins=0 count hoke galti se watcher ban jaata tha; ab `closedPlayers` alag nikaal ke pura exclude hota hai, aur uska bhi `selfExitSuccess` emit jaata hai.
 

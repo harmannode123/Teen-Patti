@@ -218,83 +218,180 @@ module.exports.roomList = [
         name: "Teen Patti",
         gameType: "teenpatti",
         minEntry: 10000,
-        maxEntry: 1000000
+        maxEntry: 1000000,
+        level: [
+            {
+                name: "Bronze",
+                bootAmount: 1000,
+                entryAmount: 10000,
+                betLimit: 50000,
+                roomId: "1"
+            },
+            {
+                name: "Silver",
+                bootAmount: 5000,
+                entryAmount: 50000,
+                betLimit: 50000,
+                roomId: "2"
+            },
+            {
+                name: "Gold",
+                bootAmount: 10000,
+                entryAmount: 100000,
+                betLimit: 100000,
+                roomId: "3"
+            },
+            {
+                name: "Platinum",
+                bootAmount: 50000,
+                entryAmount: 500000,
+                betLimit: 100000,
+                roomId: "4"
+            },
+            {
+                name: "Diamond",
+                bootAmount: 100000,
+                entryAmount: 1000000,
+                betLimit: 1000000,
+                roomId: "5"
+            }
+        ],
+        vMode:false
     },
-    // {
-    //     id: 2,
-    //     name: "Muflis",
-    //     gameType: "muflis"
-    // },
-    // {
-    //     id: 3,
-    //     name: "Joker",
-    //     gameType: "joker"
-    // },
-    // {
-    //     id: 4,
-    //     name: "4 Card Teen Patti",
-    //     gameType: "fourcard"
-    // },
-    // {
-    //     id: 5,
-    //     name: "2 Card Teen Patti",
-    //     gameType: "twocard"
-    // },
-    {
 
+    {
         name: "Zhandu",
         gameType: "zhandu",
-        minEntry: 1000,
-        maxEntry: 1000000
+        minEntry: 10000,
+        maxEntry: 1000000,
+        level: [
+            {
+                name: "Bronze",
+                bootAmount: 1000,
+                entryAmount: 10000,
+                betLimit: 50000,
+                roomId: "6"
+            },
+            {
+                name: "Silver",
+                bootAmount: 5000,
+                entryAmount: 50000,
+                betLimit: 50000,
+                roomId: "7"
+            },
+            {
+                name: "Gold",
+                bootAmount: 10000,
+                entryAmount: 100000,
+                betLimit: 100000,
+                roomId: "8"
+            },
+            {
+                name: "Platinum",
+                bootAmount: 50000,
+                entryAmount: 500000,
+                betLimit: 100000,
+                roomId: "9"
+            },
+            {
+                name: "Diamond",
+                bootAmount: 100000,
+                entryAmount: 1000000,
+                betLimit: 1000000,
+                roomId: "10"
+            }
+        ],
+        vMode:false
     },
-    {
 
+    {
         name: "Flipper",
         gameType: "flipper",
-        minEntry: 1000,
-        maxEntry: 1000000
+        minEntry: 10000,
+        maxEntry: 1000000,
+        level: [
+            {
+                name: "Bronze",
+                bootAmount: 1000,
+                entryAmount: 10000,
+                betLimit: 50000,
+                roomId: "11"
+            },
+            {
+                name: "Silver",
+                bootAmount: 5000,
+                entryAmount: 50000,
+                betLimit: 50000,
+                roomId: "12"
+            },
+            {
+                name: "Gold",
+                bootAmount: 10000,
+                entryAmount: 100000,
+                betLimit: 100000,
+                roomId: "13"
+            },
+            {
+                name: "Platinum",
+                bootAmount: 50000,
+                entryAmount: 500000,
+                betLimit: 100000,
+                roomId: "14"
+            },
+            {
+                name: "Diamond",
+                bootAmount: 100000,
+                entryAmount: 1000000,
+                betLimit: 1000000,
+                roomId: "15"
+            }
+        ],
+        vMode:false
     },
-    {
 
+    {
         name: "Variation",
-        gameType: "variation",
-        minEntry: 1000,
-        maxEntry: 1000000
-    }
-];
-
-// Boot-amount tiers used to expand each room into variation rooms
-module.exports.variationList = [
-    {
-        name: "Bronze",
-        bootAmount: 1000,
-        entryAmount:10000,
-        betLimit:50000
-    },
-    {
-        name: "Silver",
-        bootAmount: 5000,
-        entryAmount:50000,
-        betLimit:50000
-    },
-    {
-        name: "Gold",
-        bootAmount: 10000,
-        entryAmount:100000,
-        betLimit:100000
-    },
-    {
-        name: "Platinum",
-        bootAmount: 50000,
-        entryAmount:500000,
-        betLimit:100000
-
-    },
-    {
-        name: "Diamond",
-        bootAmount: 100000,
-        entryAmount:1000000,
-        betLimit:1000000
+        gameType: "teenpatti",
+        minEntry: 10000,
+        maxEntry: 1000000,
+        level: [
+            {
+                name: "Bronze",
+                bootAmount: 1000,
+                entryAmount: 10000,
+                betLimit: 50000,
+                roomId: "16"
+            },
+            {
+                name: "Silver",
+                bootAmount: 5000,
+                entryAmount: 50000,
+                betLimit: 50000,
+                roomId: "17"
+            },
+            {
+                name: "Gold",
+                bootAmount: 10000,
+                entryAmount: 100000,
+                betLimit: 100000,
+                roomId: "18"
+            },
+            {
+                name: "Platinum",
+                bootAmount: 50000,
+                entryAmount: 500000,
+                betLimit: 100000,
+                roomId: "19"
+            },
+            {
+                name: "Diamond",
+                bootAmount: 100000,
+                entryAmount: 1000000,
+                betLimit: 1000000,
+                roomId: "20"
+            }
+        ],
+        vMode:true
     }
 ];
 
@@ -314,6 +411,7 @@ module.exports.gameTypeConfig = {
     // made by "assuming" a third card (per official rules), so handSize = 3
     twocard: { cardsPerPlayer: 2, handSize: 3 }
 }
+
 
 
 

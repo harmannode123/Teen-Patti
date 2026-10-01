@@ -129,6 +129,11 @@ const matchSchema = mongoose.Schema({
         //  enum: ["teenpatti", "muflis", "joker", "fourcard", "twocard", "zhandu"],
         default: "Bronze"
     },
+    // Variation room flag (appConstant roomList -> vMode). Default false.
+    vMode: {
+        type: Boolean,
+        default: false
+    },
     // Joker variant only: the card cut from the deck before dealing.
     // Its rank (cardValue) becomes the wild card for this match.
     jokerCard: {
@@ -179,6 +184,18 @@ const matchSchema = mongoose.Schema({
     commission: {
         type: Number,
         default: 0
+    },
+    // Round end pe har winner ko kya mila — credit helpers (creditWinnerPot / splitPotEqually)
+    // commission ke saath isi me $push karte hain. House ledger isi se banta hai
+    // (helper/houseLedger.helper.js). amount = net credit, commission = is hisse se kata.
+    payouts: {
+        type: [{
+            playerId: { type: mongoose.Schema.Types.ObjectId, ref: "user" },
+            amount: { type: Number, default: 0 },
+            commission: { type: Number, default: 0 },
+            potNo: { type: Number, default: null }
+        }],
+        default: []
     },
     // Match start pe PER-USER kitna boot liya gaya (e.g. sabse 1000 -> bootAmount = 1000).
     // Baad me pata chal sake ki is match ka starting boot kitna tha.
@@ -280,3 +297,6 @@ matchSchema.index({ turn: 1, start: 1, end: 1 });
 matchSchema.index({ players: 1, end: 1, createdAt: -1 });
 
 module.exports.model = mongoose.model("match", matchSchema);
+// matchHistory.model.js isi schema ko clone karke apna model banata hai —
+// alag se schema copy-paste nahi rakhna, warna match me field add hoti aur history me chhoot jaati.
+module.exports.schema = matchSchema;

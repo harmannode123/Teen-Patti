@@ -1,35 +1,30 @@
-const utils = require('./utils');
-const adminSchema = require('../model/admin.model');
-const userSchema = require("../model/user.model")
 const matchSchema = require("../model/match.model");
-const { roomList, variationList } = require("./appConstant");
-
+const { roomList } = require("./appConstant");
 
 module.exports.createDefaultAdmin = async () => {
 
-    
-    //await matchSchema.model.deleteMany({})
-
-    const totalGameList = []
-    roomList.map(x => {
-        variationList.forEach(y => {
-            totalGameList.push({
-                ...x,
-                variation: y?.name,
-                bootAmount: y?.bootAmount,
-                entryAmount: y?.entryAmount,
-                betLimit:y?.betLimit
+    // roomList -> flat rooms (ek level = ek room doc)
+    const allRooms = []
+    for (const game of roomList) {
+        for (const level of game.level) {
+            allRooms.push({
+                roomId: level.roomId,
+                roomName: game.name,
+                gameType: game.gameType,
+                variation: level.name,
+                bootAmount: level.bootAmount,
+                entryAmount: level.entryAmount,
+                betLimit: level.betLimit,
+                vMode: game.vMode || false
             })
-        })
-    })
-
-
-    const newRooms = []
-    for (let i = 1; i <= totalGameList.length; i++) newRooms.push({ roomId: i, roomName: totalGameList[i - 1]?.name, gameType: totalGameList[i - 1]?.gameType, variation: totalGameList[i - 1]?.variation, bootAmount: totalGameList[i - 1]?.bootAmount,entryAmount: totalGameList[i - 1]?.entryAmount,betLimit:totalGameList[i - 1]?.betLimit })
-
-    const checkRoom = await matchSchema.model.find({});
-    if (checkRoom.length === 0) {
-        await matchSchema.model.insertMany(newRooms)
+        }
     }
+
+    // Match table me kaunsi roomId already hai
+    const existingIds = await matchSchema.model.distinct("roomId")
+
+    // Jo roomId missing hai sirf wahi insert karo
+    const missingRooms = allRooms.filter(room => !existingIds.includes(room.roomId))
+    if (missingRooms.length > 0) await matchSchema.model.insertMany(missingRooms)
 
 }

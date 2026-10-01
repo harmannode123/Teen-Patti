@@ -1,7 +1,11 @@
 const { socketEmit, gameConfig, gameTypeConfig, zhanduConfig ,gameTypeConstant,roomList,callbackType} = require("../../helper/appConstant");
+// House commission % — .env se (COMMISSION_PERCENT), na mile to 5. Badalna ho to sirf .env.
+const COMMISSION_PERCENT = Number(process.env.COMMISSION_PERCENT) || 5;
 const mongoose = require("mongoose");
 const userSchema = require("../../model/user.model");
 const matchSchema = require("../../model/match.model");
+const matchHistorySchema = require("../../model/matchHistory.model");
+const { saveHouseLedger } = require("../../helper/houseLedger.helper");
 const economySchema = require("../../model/economy.mode.")
 const gameSessionSchema = require("../../model/gameSession.model");
 const cardDeck = require("../../helper/card.json");
@@ -27,8 +31,6 @@ const SESSION_CLOSE_MS = 15 * 1000;   // 30 sec — itne me wapas nahi aaya to s
 const NEXT_ROUND_MS = 17000;              // 10s
 const NEXT_ROUND_SEC = NEXT_ROUND_MS / 1000;
 
-// Winner ke jeete hue amount pe house commission (percent). `takeCommission` dekho.
-const COMMISSION_PERCENT = 5;
 
 // FLIPPER §4 (decision D3): all-in ke forced side show ke baad agli cheez (agla betTurn,
 // ya chain ka agla link) itni der baad. Client ko dono hand ka reveal + winner animation
@@ -100,30 +102,50 @@ const isRoundComplete = (matchData, justActedId) => {
 // Math.floor -> coins hamesha poore number rahein; chhote pot pe commission 0 ho sakta hai.
 // `$inc` isliye ki side pots me ek match pe kai baar credit hota hai -> sab judte jaayein.
 // Wapas: commission kaatne ke baad bacha hua amount (yahi winner ko credit hoga).
-const takeCommission = async (matchId, pot) => {
-    const commission = Math.floor(Number(pot) * COMMISSION_PERCENT / 100);
-    if (commission > 0 && matchId) await matchSchema.model.updateOne({ _id: matchId }, { $inc: { commission } });
-    return pot - commission;
+const takeCommission = (pot) => Math.floor(Number(pot) * COMMISSION_PERCENT / 100);
+
+// PAYOUT RECORD: match pe commission `$inc` + winners ka breakdown `payouts[]` me `$push`,
+// EK hi updateOne me (pehle commission alag query thi). House ledger (startNextRound tail ->
+// saveHouseLedger) isi payouts[] se banta hai, isliye credit aur record hamesha saath.
+const recordPayout = async (matchId, entries, commission) => {
+    if (!matchId || !entries?.length) return;
+    await matchSchema.model.updateOne({ _id: matchId }, {
+        ...(commission > 0 ? { $inc: { commission } } : {}),
+        $push: { payouts: { $each: entries } }
+    });
 };
 
-const creditWinnerPot = async (winnerId, pot, matchId) => {
+const creditWinnerPot = async (winnerId, pot, matchId, potNo = null) => {
     if (!winnerId || String(winnerId) === "DRAW" || !mongoose.Types.ObjectId.isValid(winnerId)) return;
     if (!pot || pot <= 0) return;
-    pot = await takeCommission(matchId, pot);
-    await userSchema.model.updateOne({ _id: winnerId }, { $inc: { coins: pot } });
+    const commission = takeCommission(pot);
+    const amount = pot - commission;
+    await Promise.all([
+        userSchema.model.updateOne({ _id: winnerId }, { $inc: { coins: amount } }),
+        recordPayout(matchId, [{ playerId: winnerId, amount, commission, potNo }], commission)
+    ]);
 };
 
-const splitPotEqually = async (playerIds, pot, matchId) => {
+// Commission bhi winners me waise hi (equal + remainder) baant ke record hota hai, taaki
+// payouts[] ka sum(amount) + sum(commission) == pot exact rahe.
+const splitPotEqually = async (playerIds, pot, matchId, potNo = null) => {
     const ids = (playerIds || []).filter(id => id && mongoose.Types.ObjectId.isValid(id));
     if (!ids.length || !pot || pot <= 0) return;
-    pot = await takeCommission(matchId, pot);
-    const share = Math.floor(pot / ids.length);
-    let remainder = pot - share * ids.length;
-    for (const id of ids) {
-        const extra = remainder > 0 ? 1 : 0;
-        remainder -= extra;
-        await userSchema.model.updateOne({ _id: id }, { $inc: { coins: share + extra } });
-    }
+    const commission = takeCommission(pot);
+    const net = pot - commission;
+    const share = Math.floor(net / ids.length);
+    const cShare = Math.floor(commission / ids.length);
+    let remainder = net - share * ids.length;
+    let cRemainder = commission - cShare * ids.length;
+    const entries = ids.map(id => {
+        const extra = remainder > 0 ? 1 : 0; remainder -= extra;
+        const cExtra = cRemainder > 0 ? 1 : 0; cRemainder -= cExtra;
+        return { playerId: id, amount: share + extra, commission: cShare + cExtra, potNo };
+    });
+    await Promise.all([
+        ...entries.map(e => userSchema.model.updateOne({ _id: e.playerId }, { $inc: { coins: e.amount } })),
+        recordPayout(matchId, entries, commission)
+    ]);
 };
 
 module.exports.startMatch = async (io, matchData) => {
@@ -302,12 +324,10 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
 
         let currentBetAmount= matchData?.currentBetAmount
       
-        if(seenPlayer && previousWinner )currentBetAmount=currentBetAmount*4
-        else if(seenPlayer || previousWinner)currentBetAmount=currentBetAmount*2
+        if(seenPlayer && (previousWinner && matchData?.round == 1) )currentBetAmount=currentBetAmount*4
+        else if(seenPlayer || (previousWinner && matchData?.round == 1))currentBetAmount=currentBetAmount*2
         // const betLimit=matchData?.betLimit-matchData?.currentBetAmount
         const betLimit=matchData?.betLimit
-
-        console.log("::::::::::::::::::::bet amount::::::::::::::::",{currentBetAmount,seenPlayer , previousWinner,p:matchData?.previousWinner,c:currentPlayerTurnId})
 
 
         matchData?.players.forEach((player) => {
@@ -395,7 +415,7 @@ const resolveShowdown = async (io, matchData) => {
 
     // Har pot uske winners me equally credit (splitPotEqually pot-conserving hai).
     for (const r of potResults) {
-        await splitPotEqually(r.winners, r.amount, matchData?._id)
+        await splitPotEqually(r.winners, r.amount, matchData?._id, r.potNo)
     }
 
     const mainWinner = potResults[0]?.winners?.[0] || null
@@ -474,8 +494,8 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
 
         if(!isPacked){
             let minBetPut =matchData?.currentBetAmount
-            if(seenPlayer && previousWinner ) minBetPut = minBetPut*4
-            else if(seenPlayer || previousWinner) minBetPut = minBetPut*2
+            if(seenPlayer && (previousWinner && matchData?.round == 1) ) minBetPut = minBetPut*4
+            else if(seenPlayer || (previousWinner && matchData?.round == 1)) minBetPut = minBetPut*2
 
             if((betAmount < minBetPut) && myCoins>=minBetPut) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
 
@@ -494,8 +514,8 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                 else if(betAmount > myCoins) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
                 else if(betAmount > minBetPut){
 
-                    if(seenPlayer && previousWinner) currentBet = betAmount / 4;
-                    else if(seenPlayer || previousWinner) currentBet = betAmount /2;
+                    if(seenPlayer && (previousWinner && matchData?.round == 1)) currentBet = betAmount / 4;
+                    else if(seenPlayer || (previousWinner && matchData?.round == 1)) currentBet = betAmount /2;
                     else currentBet = betAmount
                 } 
                 else if(betAmount == minBetPut)  currentBet = currentBet
@@ -504,8 +524,8 @@ const placeBetCore = async (io, user, socketId, data, matchIdHint = null) => {
                 if(betAmount > myCoins) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Insufficient coins." });
                 else if(betAmount > minBetPut){
 
-                    if(seenPlayer && previousWinner) currentBet = betAmount / 4;
-                    else if(seenPlayer || previousWinner) currentBet = betAmount /2;
+                    if(seenPlayer && (previousWinner && matchData?.round == 1)) currentBet = betAmount / 4;
+                    else if(seenPlayer || (previousWinner && matchData?.round == 1)) currentBet = betAmount /2;
                     else currentBet = betAmount
                 } 
                 else if(betAmount == minBetPut)  currentBet = currentBet
@@ -864,7 +884,7 @@ module.exports.fetchBestHand = async (io, user, socketId, data = {}) => {
 
         if (!selfData || !Array.isArray(cards) || !cards.length) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Cards are not distributed yet." });
 
-        if (!selfData?.isSeen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Please see your cards first." });
+       // if (!selfData?.isSeen) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Please see your cards first." });
 
         const jokerValues = getApplicableJokerValues(matchData, selfData)
 
@@ -1129,9 +1149,6 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
 
         let [userData, matchData] = await Promise.all([
             userSchema.model.findOne({ ...check }),
-            // watchers bhi populate: show branch (roundWinner) aur resolveShowdown dono
-            // sendCommonEmitForWatcher call karte hain — bina populate ke watchers sirf
-            // ObjectId hote, `x?._id` undefined aata aur spectators ko kuch dikhta hi nahi.
             matchSchema.model.findOne({ start: true, end: false, turn: userId }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').populate('watchers', '_id name socketId coins').lean()
         ])
 
@@ -1152,15 +1169,19 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
 
         let currentBetAmount= matchData?.currentBetAmount
 
-        if(seenPlayer && previousWinner )currentBetAmount=currentBetAmount*4
-        else if(seenPlayer || previousWinner)currentBetAmount=currentBetAmount*2
+        if(seenPlayer && (previousWinner && matchData?.round == 1) )currentBetAmount=currentBetAmount*4
+        else if(seenPlayer || (previousWinner && matchData?.round == 1))currentBetAmount=currentBetAmount*2
 
-        const requesterBet = Number(currentBetAmount) * 2
+        let requesterBet = Number(currentBetAmount)
+        if(show) requesterBet = requesterBet*2
        
-        if (requesterBet < (Number(currentBetAmount) || 0)) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Show not possible. You don't have enough balance for side show." });
+        if ((Number(userData?.coins) || 0) < requesterBet) return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: "Show not possible. You don't have enough balance for side show." });
         if (requesterBet > 0) {
-            await userSchema.model.updateOne({ _id: userId }, { $inc: { coins: -requesterBet } })
-            await matchSchema.model.updateOne({ _id: matchData?._id }, { $inc: { pot: requesterBet } })
+            // Coins debit + pot credit + requester ka totalBet (playersData positional $) — teeno saath.
+            await Promise.all([
+                userSchema.model.updateOne({ _id: userId }, { $inc: { coins: -requesterBet } }),
+                matchSchema.model.updateOne({ _id: matchData?._id, "playersData.playerId": userId }, { $inc: { pot: requesterBet, "playersData.$.totalBet": requesterBet } })
+            ])
         }
 
         if (show) {
@@ -1282,8 +1303,6 @@ module.exports.sideShow = async (io, user, socketId, data = {}) => {
             if (lockMatchId && lockToken) await releaseLock(lockMatchId, lockToken);
             this.respondToSideShow(io, playerId, socketId, { accept: true })
         }
-
-
 
 
     } catch (error) {
@@ -1455,7 +1474,9 @@ module.exports.respondToSideShow = async (io, user, socketId, data = {}) => {
 
             const index = checkIndex(matchData, userId)
 
-            const selfCoin = user?.coins
+            // `user` ab sideShow() se sirf playerId (string) aata hai, user object nahi -> `user?.coins`
+            // undefined jaata tha. Coins populated players se lo.
+            const selfCoin = matchData?.players?.find(x => String(x?._id) === String(userId))?.coins
             let selfBet = matchData?.playersData.find(x => String(x?.playerId) == String(userId))
             selfBet = selfBet?.totalBet
 
@@ -1724,39 +1745,43 @@ module.exports.startNextRound = async (io, matchData) => {
         })
 
         let newMatch = null
-        if(matchData?.roomName == "Variation"){
+        if(matchData?.vMode){
 
             let gameType=matchData?.gameType == gameTypeConstant?.TEEN_PATTI? gameTypeConstant?.ZHANDU: gameTypeConstant?.FLIPPER
-
             if(matchData?.gameType == gameTypeConstant?.FLIPPER){
-                gameType= gameTypeConstant?.Variation
-                players=[]
-                seatPosition=[]
+                gameType= gameTypeConstant?.TEEN_PATTI
             }
-            console.log("::::::::::::::viraiton data ::::::::::::::::::",gameType)
-
-            
-           // [newMatch] = await Promise.all([
-           newMatch= await  matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
-                betLimit:matchData?.betLimit,roomName:matchData?.roomName
+           newMatch= await matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
+                betLimit:matchData?.betLimit,roomName:matchData?.roomName,vMode:matchData?.vMode
             })
-       // ])
+       
         }
         else {
 
-        console.log("::::::::::::::nottttttt vvvvvvv ::::::::::::::::::",)
-
-           // [newMatch] = await Promise.all([
             newMatch= await  matchSchema.model.create({ players, roomId: matchData?.roomId, seatPosition, waitForNextRount: true, watchers, gameType: matchData?.gameType,variation:matchData?.variation , previousWinner: matchData?.winner,bootAmount:matchData?.bootAmount,entryAmount:matchData?.entryAmount,
-                betLimit:matchData?.betLimit,roomName:matchData?.roomName
+                betLimit:matchData?.betLimit,roomName:matchData?.roomName,vMode:matchData?.vMode
             })
-       // ])
         }
        
         newMatch = newMatch.toObject()
 
         // NEXT_ROUND_MS baad agla round shuru — BullMQ flow job (reload-safe; pehle setTimeout tha).
         await scheduleFlow("startNext", { matchId: String(newMatch?._id) }, NEXT_ROUND_MS)
+
+        try {
+            const endedMatch = await matchSchema.model.findById(matchData?._id).lean()
+            if (endedMatch) {
+                // History copy + house ledger entry + match delete — teeno saath. endedMatch
+                // fresh hai (credit ke baad), isliye commission/payouts isme poore hain.
+                await Promise.all([
+                    matchHistorySchema.model.create(endedMatch),
+                    saveHouseLedger(endedMatch),
+                    matchSchema.model.deleteOne({ _id: endedMatch._id })
+                ])
+            }
+        } catch (e) {
+            console.log("matchHistory copy/delete error =>", e.message)
+        }
 
 
     } catch (error) {
@@ -2057,7 +2082,6 @@ module.exports.roomList = async (io, user, socketId, data = {}) => {
 
 
 module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
-    console.log(":::: roomList::::::::::::rommList :::: ",data);
     try{
 
         const {gameType } = data
@@ -2078,7 +2102,8 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
         {
             $match: {
                 _id:{$ne:null},
-                gameType:gameType,
+               // gameType:gameType,
+                ...(gameType == "variation"?{vMode:true}:{gameType:gameType}),
                 end: false
             }
         },
@@ -2109,8 +2134,6 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
             }
         }
     ])
-
-    console.log(":::: roomList::::::::::::rommList :::: ",list);
 
 
     return io.to(socketId).emit(socketEmit.fetchLobbyList, { message: "Fetch Room List success", list, selfCoin });
@@ -2177,6 +2200,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
         let { roomId, index = -1 } = data;
 
         console.log("::::::::::::::::::::Join Room::::::::", user?.name, data);
+        const userId= user?._id || user
 
         if (!roomId || index < 0) return;
 
@@ -2184,7 +2208,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
         // findOneAndUpdate banda ko add kar chuka hota aur use nikalne ke liye rollback
         // karna padta.
         let [userData, room] = await Promise.all([
-            userSchema.model.findOne({ _id: user?._id, socketId,sessionActive:true ,sessionClosed:false}),
+            userSchema.model.findOne({ _id: userId, socketId,sessionActive:true ,sessionClosed:false}),
             matchSchema.model.findOne({ roomId, end: false }).sort({ createdAt: -1 }).lean()
         ]);
 
@@ -2201,7 +2225,7 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
         // Check pass -> ab seat do.
         let matchData = await matchSchema.model.findOneAndUpdate({
             roomId,
-            players: { $ne: user?._id },
+            players: { $ne:userId },
             end: false,
             seatPosition: {
                 $not: {
@@ -2210,11 +2234,10 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
             }
         },
             {
-                $addToSet: { players: user?._id },
-                $push: { seatPosition: { playerId: user?._id, index } },
-                $pull: { watchers: user?._id },
+                $addToSet: { players: userId },
+                $push: { seatPosition: { playerId: userId, index } },
+                $pull: { watchers: userId },
                 ...(previousWinner?{previousWinner:null}:{}),
-                ...(room.gameType == gameTypeConstant.Variation? { gameType: gameTypeConstant.TEEN_PATTI} : {}),
             },
             { new: true }
         ).sort({ createdAt: -1 }).populate('players', '_id name socketId coins').
