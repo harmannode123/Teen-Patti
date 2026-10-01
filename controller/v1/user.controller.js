@@ -150,8 +150,23 @@ module.exports.gameHistory = async (req, res, next) => {
 
             // Player ne pot me se kitna wapas jeeta.
             let won = 0;
+            // Is player ke jeete hue hisse se house ne kitna commission kaata.
+            let commission = 0;
 
-            if (m.pots?.length) {
+            // payouts[] me wahi amount hai jo ACTUAL credit hua (commission kat ke) — pehle yahan
+            // pot se gross nikalte the, to user ko history me 100 dikhta tha jabki mila 95 tha.
+            const myPayouts = (m.payouts || []).filter((p) => String(p.playerId) === playerId);
+
+            if (myPayouts.length) {
+                for (const p of myPayouts) {
+                    won += p.amount || 0;
+                    commission += p.commission || 0;
+                }
+            } else if (m.payouts?.length) {
+                // Payouts record hain par is player ka koi nahi -> haara, won 0 hi rahega.
+            } else if (m.pots?.length) {
+                // Neeche ke branches sirf PURANE matches ke liye (payouts[] aane se pehle ke) —
+                // un par commission tha hi nahi, isliye gross hi sahi hai.
                 // ZHANDU all-in — har pot apne winners me equally banta tha.
                 for (const p of m.pots) {
                     const winnerIds = (p.winners || []).map((w) => String(w));
@@ -172,8 +187,9 @@ module.exports.gameHistory = async (req, res, next) => {
                 game: `${m.roomName}/${m.variation}`,
                 gameType: m.gameType,
                 totalBet,
-                won,
-                profitLoss: won - totalBet,   // + profit / - loss
+                won,                          // commission kat ke actual credit
+                commission,
+                profitLoss: won - totalBet,   // + profit / - loss (commission ke baad)
                 isWinner: won > 0,
                 pot: m.pot,
                 playedAt: m.createdAt,

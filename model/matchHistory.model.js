@@ -6,4 +6,8 @@ const { schema: matchSchema } = require("./match.model");
 // `_id` bhi wahi rehta hai jo original match ka tha — history se match seedha map ho jaata hai.
 const matchHistorySchema = matchSchema.clone();
 
+// Admin panel ke "3D Games" reports (dashboard / gameplay list) date range + newest-first
+// pe chalte hain — iske bina har report poori history scan + memory sort karti.
+matchHistorySchema.index({ createdAt: -1 });
+
 module.exports.model = mongoose.model("matchHistory", matchHistorySchema);

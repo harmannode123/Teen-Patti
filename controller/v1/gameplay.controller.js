@@ -22,7 +22,7 @@ global.dashCallTimeouts = {};
 
 // Disconnect ke baad itni der ka grace period. Iske andar wapas aa gaya to session zinda,
 // warna close. Refresh/network drop bhi disconnect hi hota hai — isliye turant band nahi karte.
-const SESSION_CLOSE_MS = 15 * 1000;   // 30 sec — itne me wapas nahi aaya to session close
+const SESSION_CLOSE_MS = 2 * 1000;    // 30 sec — itne me wapas nahi aaya to session close
 
 // Round khatam hone se agla round shuru hone tak ka gap. Ye EK hi jagah define hai —
 // `startNextRound` isi se BullMQ job schedule karta hai AUR `roundWinner` payload me

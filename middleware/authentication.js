@@ -1,5 +1,6 @@
 
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 const { responseStatus } = require("../helper/appConstant");
 const utils = require("../helper/utils");
 const userSchema = require("../model/user.model");
@@ -45,6 +46,23 @@ module.exports.adminAuthentication = async (req, res, next) => {
         next();
     }
     catch (error) { return next(error) }
+}
+
+// Admin-panel reports ke liye: operator ka backend (server-to-server) `x-admin-key` header
+// me ADMIN_API_KEY bhejta hai — uske paas humara admin JWT nahi hota, aur admin panel ka
+// staff login uske apne system me hai. Key na ho/galat ho to normal admin JWT wala raasta.
+// ADMIN_API_KEY .env me set hi na ho to key wala raasta band rehta hai (khali key match nahi).
+module.exports.adminPanelAuthentication = (req, res, next) => {
+    const expected = process.env.ADMIN_API_KEY;
+    const given = req.headers["x-admin-key"];
+    if (expected && typeof given === "string") {
+        const a = Buffer.from(given);
+        const b = Buffer.from(expected);
+        // timingSafeEqual: seedha === se key byte-by-byte time se guess ho sakti hai.
+        if (a.length === b.length && crypto.timingSafeEqual(a, b)) return next();
+        return res.status(responseStatus.unAuthorized).json(utils.createErrorResponse("loginSessionExpired"));
+    }
+    return module.exports.adminAuthentication(req, res, next);
 }
 
 // module.exports.socketUserAuthentication = async (socket, next) => {

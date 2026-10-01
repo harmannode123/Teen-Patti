@@ -362,3 +362,28 @@ module.exports.gameHistoryValidation = async (req, res, next) => {
         next();
     } catch (err) { return res.status(responseStatus.badRequest).send({ success: false, message: err.message }); }
 }
+
+// Admin panel "3D Games" tab — chaaro GET APIs ka query ek hi schema se (jo field jis API
+// me kaam ki nahi wo ignore ho jaati hai).
+module.exports.adminGamesValidation = async (req, res, next) => {
+    try {
+        const isDate = (v) => !v || !isNaN(new Date(v));
+        await yup.object({
+            game: yup.string().trim().oneOf(["teenpatti", "zhandu", "flipper", "variation"]).optional(),
+            from: yup.string().trim().test("date", "from must be a valid date", isDate).optional(),   // "2026-10-01" ya ISO
+            to: yup.string().trim().test("date", "to must be a valid date", isDate).optional(),
+            tz: yup.string().trim().test("tz", "tz must be a valid timezone", (v) => {
+                if (!v) return true;
+                try { new Intl.DateTimeFormat("en-US", { timeZone: v }); return true; } catch (e) { return false; }
+            }).optional(),
+            userId: yup.string().trim().optional(),       // operator ka user id
+            roomId: yup.string().trim().optional(),
+            search: yup.string().trim().max(100).optional(),
+            sortBy: yup.string().oneOf(["totalBet", "won", "profitLoss", "commission", "rounds", "wins", "lastPlayed"]).optional(),
+            order: yup.string().oneOf(["asc", "desc"]).optional(),
+            limit: yup.number().integer().min(1).max(100).optional(),
+            offset: yup.number().integer().min(0).optional(),
+        }).validate(req.query);
+        next();
+    } catch (err) { return res.status(responseStatus.badRequest).send({ success: false, message: err.message }); }
+}
