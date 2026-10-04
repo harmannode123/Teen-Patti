@@ -273,6 +273,13 @@ const matchSchema = mongoose.Schema({
         type: Boolean,
         default: false
     },
+    // Match start ke 5s baad jab `dealCards` job cards emit kar deta hai (_flowDealCards) tab
+    // true hota hai. Isse pata chalta hai ki is round me cards client tak pahunch chuke hain ya
+    // abhi deal ka wait hai (har naya round naya doc banata hai -> default false se shuru).
+    cardDistributed: {
+        type: Boolean,
+        default: false
+    },
 }, {
     timestamps: true
 });

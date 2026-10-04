@@ -28,7 +28,7 @@ const SESSION_CLOSE_MS = 2 * 1000;    // 30 sec — itne me wapas nahi aaya to s
 // `startNextRound` isi se BullMQ job schedule karta hai AUR `roundWinner` payload me
 // `nextRoundIn` bhej deta hai, taaki client apna hardcoded countdown na chalaye
 // (pehle client ka timer server se alag tha -> match "jaldi" start hota dikhta tha).
-const NEXT_ROUND_MS = 17000;              // 10s
+const NEXT_ROUND_MS = 24000;              // 24s
 const NEXT_ROUND_SEC = NEXT_ROUND_MS / 1000;
 
 
@@ -294,7 +294,7 @@ const sendBetTurnEmitOld = async (io, currentPlayerTurnId, matchData,seenCard=fa
 
 }
 
-const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false) => {
+const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false,timer=30) => {
 
 
     try {
@@ -329,6 +329,7 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
         // const betLimit=matchData?.betLimit-matchData?.currentBetAmount
         const betLimit=matchData?.betLimit
 
+        console.log(":::::::::::::BEt Turn::::::::::",{currentBetAmount,index,timer})
 
         matchData?.players.forEach((player) => {
             if(isUserExitInMatch(matchData, player?._id)) return;
@@ -337,12 +338,12 @@ const sendBetTurnEmit = async (io, currentPlayerTurnId, matchData,seenCard=false
             // minimum bet se kam ho jaayein.
             let isAllIn=Number(currentBetAmount) >= Number(player?.coins) && (matchData?.gameType==gameTypeConstant?.ZHANDU || matchData?.gameType==gameTypeConstant?.FLIPPER)
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn,timerReset:!seenCard ,seenPlayer,isShow});
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: timer, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,betLimit,isAllIn,timerReset:!seenCard ,seenPlayer,isShow});
         });
 
         matchData?.watchers.forEach((player) => {
             if(String(player?._id)===String(currentPlayerTurnId) && exitPlayers) return
-            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: 30, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType,isAllIn:false,seenPlayer,isShow });
+            else emitToUser(io, player?._id, socketEmit.betTurn, { _id: matchData?._id, userId: currentPlayerTurnId, timer: timer, index, currentBetAmount, pot: matchData?.pot, showEnable: showEnable,gameType: matchData?.gameType,isAllIn:false,timerReset:true,seenPlayer,isShow });
         });
 
         if(seenCard) return;
@@ -1814,6 +1815,15 @@ module.exports._flowDealCards = async (io, matchId) => {
         })
         module.exports.sendCommonEmitForWatcher(io, match, socketEmit.cardDistributeSuccess)
 
+        // Cards emit ho gaye -> match pe `cardDistributed: true` mark karo. Filter me `cardDistributed: false`
+        // isliye ki duplicate/late job fire pe dobara write na ho. Authoritative update ke baad cache refresh.
+        const dealt = await matchSchema.model.findOneAndUpdate(
+            { _id: match?._id },
+            { $set: { cardDistributed: true } },
+            { new: true }
+        ).populate("players", "name socketId coins").populate("watchers", "_id name socketId coins").lean()
+        if (dealt) await setMatch(dealt)
+
         // Pehla betTurn ka delay (baad me per-player DYNAMIC karna ho to sirf yahi variable
         // badlo — neeche firstJoker uspe based hai).
         let betTurnDelay =match?.players.length?(match.players.length*4)*1000: 20000
@@ -1886,38 +1896,50 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
 
         const [matchData,userdata] = await Promise.all([
             // Sirf padhna hai -> findOne. (findOneAndUpdate bina update ke galat intent tha.)
-            matchSchema.model.findOne({ players: user?._id, end: false }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean(),
+            matchSchema.model.findOne({ players: user?._id,end: false }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').populate('watchers', 'name socketId coins').lean(),
             userSchema.model.findOne({ _id: user?._id }).lean()
         ]);
 
         if(!matchData || !userdata) return 
 
         matchData.players.forEach((player) => {
+            const playerData= matchData?.playersData?.find(x => String(x?.playerId) === String(player?._id))
             player['index'] = checkIndex(matchData, player?._id)
+            player['isPacked'] = playerData?.isPacked || false
+            player['isSeen'] = playerData?.isSeen || false
         })
 
         // exitPlayers / jokerCards purane ya non-zhandu docs me missing ho sakte hain -> `?? []`,
         // warna seedha crash aur client ko errorLog.
         const exitIds = (matchData?.exitPlayers ?? []).map(x => String(x))
         const players= (matchData.players ?? []).filter(x => !exitIds.includes(String(x?._id)))
-        
+
         const payload = {
             _id: matchData?._id,
             turn: matchData?.turn,
             players: players,
-            timer: 10,
+            start:matchData?.cardDistributed,
+            timer: Math.floor((await getAutoPackRemainingMs(matchData?._id) ?? 0) / 1000),
             roomId: matchData?.roomId,
             previousWinnerSeatIndex : previousWinnerIndex(matchData, matchData?.previousWinner),
             gameType:matchData?.gameType,
             jokerCards: (matchData?.jokerCards ?? []).filter(x => x?.opened).map(x => x.card),
             selfCoin: userdata?.coins,
             sessionClosed:userdata?.sessionClosed,
+            cards: matchData?.playersData?.find(x => String(x?.playerId) === String(user?._id) && x?.isSeen)?.cards || [],
+            index: checkIndex(matchData, matchData?.turn),
+            pot: matchData?.pot,
         }
 
-        console.log(":::::::::::::::::::>>.watchy room ::::::::::",payload?.jokerCards)
 
 
-        io.to(socketId).emit(socketEmit.resyncMatchSuccess, { message: "Fetch Room List success", ...payload });
+      console.log(":::::::::::::::resyncmatch:::::::::::::::::::::::",userdata?.name)
+
+
+       io.to(socketId).emit(socketEmit.resyncMatchSuccess, { message: "Fetch Room List success", ...payload });
+
+      if(String(matchData?.turn)==String(user?._id)) await sendBetTurnEmit(io,user?._id,matchData,true,payload?.timer)
+
     } catch (error) {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
 
@@ -1990,6 +2012,7 @@ module.exports.selfExit = async (io, user, socketId, disconnect = false,data = {
         })
         payload.selfUser = false
         this.sendCommonEmitForWatcher(io, currentMatch, socketEmit.selfExitSuccess, payload)
+        this.broadcastLobbyUpdate(io, currentMatch)
     }
     else if(!disconnect){
         emitToUser(io, user?._id, socketEmit.selfExitSuccess, { _id: "_", roomId: "_", userId: user?._id, index: -1,selfUser:true,isLobby })
@@ -2090,9 +2113,11 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
       
     const selfCoin = freshUser?.coins ?? user?.coins ?? 0;
 
+  
     if(!gameType){
-        io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList, selfCoin });
-        return io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomList, selfCoin });
+       let  roomListData=roomList.map(x=>x?.vMode?{...x,gameType:"variation"}:x)
+        io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomListData, selfCoin });
+        return io.to(socketId).emit(socketEmit.gameList, { message: "Fetch Room List success", list:roomListData, selfCoin });
     }
 
 
@@ -2103,7 +2128,7 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
             $match: {
                 _id:{$ne:null},
                // gameType:gameType,
-                ...(gameType == "variation"?{vMode:true}:{gameType:gameType}),
+                ...(gameType == "variation"?{vMode:true}:{gameType:gameType,vMode:false}),
                 end: false
             }
         },
@@ -2128,7 +2153,7 @@ module.exports.fetchLobbyList = async (io, user, socketId, data = {}) => {
                // entryCoins:"$bootAmount",
                 roomName: 1,
                 variation: 1,
-                gameType: 1,
+                gameType: {$cond:[{ $eq: ["$vMode", true] }, "variation", "$gameType"]},
                 bootAmount:1,
                 entryAmount:1
             }
@@ -2164,7 +2189,10 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
         await deleteMatch(matchData?._id)
 
         matchData.players.forEach((player) => {
+            const playerData= matchData?.playersData?.find(x => String(x?.playerId) === String(player?._id))
             player['index'] = checkIndex(matchData, player?._id)
+            player['isPacked'] = playerData?.isPacked || false
+            player['isSeen'] = playerData?.isSeen || false
         })
 
         // exitPlayers / jokerCards purane ya non-zhandu docs me missing ho sakte hain -> `?? []`,
@@ -2176,18 +2204,23 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
             _id: matchData?._id,
             turn: matchData?.turn,
             players: players,
-            timer: 10,
+            start:matchData?.cardDistributed,
+            timer: Math.floor((await getAutoPackRemainingMs(matchData?._id) ?? 0) / 1000),
             roomId: matchData?.roomId,
             previousWinnerSeatIndex : previousWinnerIndex(matchData, matchData?.previousWinner),
             gameType:matchData?.gameType,
             jokerCards: (matchData?.jokerCards ?? []).filter(x => x?.opened).map(x => x.card),
             selfCoin: userdata?.coins,
+            cards: [],
+            sessionClosed: false,
+            index: checkIndex(matchData, matchData?.turn),
+            pot: matchData?.pot,
         }
 
         console.log(":::::::::::::::::::>>.watchy room ::::::::::",payload?.jokerCards)
 
 
-        io.to(socketId).emit(socketEmit.watchRoom, { message: "Fetch Room List success", ...payload });
+        return io.to(socketId).emit(socketEmit.watchRoom, { message: "Fetch Room List success", ...payload });
     } catch (error) {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
 
@@ -2212,7 +2245,8 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
             matchSchema.model.findOne({ roomId, end: false }).sort({ createdAt: -1 }).lean()
         ]);
 
-        if (!userData || !room) return io.to(socketId).emit(socketEmit.errorLog, { message:!userData?"User not found": "Invalid match id ." });
+        if (!userData || !room) return io.to(socketId).emit(socketEmit.errorLog, { message:!userData?"User not found": "Invalid match." });
+        if (room?.start) return io.to(socketId).emit(socketEmit.errorLog, { message: "Wait for next round." });
 
         const minCoins = (room?.entryAmount || 0);
 
@@ -2256,6 +2290,13 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
         this.sendCommonEmit(io, matchData, socketEmit.joinRoomSuccess)
         this.sendCommonEmitForWatcher(io, matchData, socketEmit.joinRoomSuccess)
 
+        // Lobby me baithe sab clients ko batao ki is gameType ki list badal gayi (activePlayers
+        // count) — wo apni taraf se fetchLobbyList dubara maang lenge. Global broadcast hai
+        // (sirf is room ke players ko nahi), kyunki lobby wale kisi match me hote hi nahi.
+        // vMode room ki lobby "variation" tab me dikhti hai (fetchLobbyList bhi vMode se filter
+        // karta hai), isliye vMode true ho to gameType "variation" jaata hai, warna match ka apna.
+        this.broadcastLobbyUpdate(io, matchData)
+
         if (matchData?.start == false && (matchData?.players.length == gameConfig?.minPlayer) && !matchData?.waitForNextRount) {
 
             console.log("::::::::::::::::::::Starting Match:>>>>>>>>>:::::::");
@@ -2268,6 +2309,18 @@ module.exports.joinRoomNew = async (io, user, socketId, data = {}) => {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });
     }
 };
+
+// Sab connected clients ko `updateLobbyList` — data me sirf `gameType` (lobby tab jo refresh karni
+// hai). io.emit Redis adapter ke saath poore PM2 cluster me jaata hai.
+module.exports.broadcastLobbyUpdate = (io, matchData) => {
+    try {
+        if (!matchData) return
+        const gameType = matchData?.vMode ? "variation" : matchData?.gameType
+        io.emit(socketEmit.updateLobbyList, { gameType })
+    } catch (error) {
+        console.log(":::::::::::::errrrrr broadcastLobbyUpdate:::::", error)
+    }
+}
 
 module.exports.sendCommonEmit = (io, matchData, emit) => {
     try {

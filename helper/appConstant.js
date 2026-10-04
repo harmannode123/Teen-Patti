@@ -55,6 +55,7 @@ module.exports.socketEmit = {
     sideShowWinner: "sideShowWinner",
     "respondToSideShow": "respondToSideShow",
     "fetchLobbyList": "fetchLobbyList",
+    "updateLobbyList": "updateLobbyList",
     "watchRoom": "watchRoom",
     resyncMatch: "resyncMatch",
     resyncMatchSuccess: "resyncMatchSuccess",

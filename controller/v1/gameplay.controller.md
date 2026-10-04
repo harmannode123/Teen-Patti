@@ -176,7 +176,7 @@ Ye pehle in-process `setTimeout` the → process restart/reload pe match atak ja
 Next player ka betTurn (2s/20s delay ke baad). Match fresh load → turn validate → `sendBetTurnEmit` (jo 30s auto-pack bhi schedule karta hai). Turn aage badh gaya to skip (double betTurn na ho).
 
 ### `_flowDealCards(io, matchId)` — exported
-Match start ke 5s baad: cards emit (players + watchers) + 20s baad pehla betTurn schedule. ZHANDU me J1 ka `jokerOpened` emit betTurn se 2s pehle schedule hota hai; FLIPPER me wahi `firstJoker` job chaaron joker ka reveal bhejta hai.
+Match start ke 5s baad: cards emit (players + watchers), phir match pe `cardDistributed: true` set (findOneAndUpdate, filter me `cardDistributed: false` taaki duplicate job fire pe dobara write na ho; baad me `setMatch` se cache refresh) + 20s baad pehla betTurn schedule. ZHANDU me J1 ka `jokerOpened` emit betTurn se 2s pehle schedule hota hai; FLIPPER me wahi `firstJoker` job chaaron joker ka reveal bhejta hai.
 
 ### `emitJokerOpened(io, match, joker, extra = {})` — exported
 Joker board badalne par sab players + watchers ko `jokerOpened` emit — COMMON helper.
@@ -206,6 +206,8 @@ Guard pass hone ke baad: cache invalidate, phir `finishSideShow(io, matchData, r
 ### `resyncMatch(io, user, socketId, data = {})` — exported
 Reconnect ke baad client current match state maang sakta hai (`resyncMatch` event). Reload/disconnect ke beech jo emits miss hue, isse board turant sahi ho jaata hai. Sirf IS user ke apne cards bhejta hai (baaki private, seen hone par hi). ZHANDU me 3 jokers (kaun khula/band) + `movesRound` bhi bhejta hai.
 
+**`timer`:** jiski chaal hai uske turn me jitne second bache hain (`getAutoPackRemainingMs` — auto-pack job se, wahi authority hai). Pehle hamesha `10` jaata tha. Auto-pack job na ho (do turn ke beech ka ~2s gap, side show pending, round khatam) to `0`.
+
 ### `selfExit(io, user, socketId, disconnect = false)` — exported
 Self exit / disconnect: user ka `socketId` null karta hai aur `disconnect` par current time stamp karta hai. `socketId` filter jaan bujh ke hai — purane socket ka late disconnect naye connection ko na maare. Live match me ho to `exitPlayers` me daalta hai, na-shuru hue match se seat/player nikal deta hai. Aakhir me 5 min ka `closeSession` BullMQ job schedule karta hai.
 
@@ -228,14 +230,17 @@ Active (non-ended) matches ki list — har room ke `totalActivePlayers` (players
 Round end se agla round start hone tak ka gap (abhi 10s). `startNextRound` isi se `startNext` BullMQ job schedule karta hai, aur teeno round-end paths ka `roundWinner` payload isi ka second-value `nextRoundIn` bhejta hai — client apna hardcoded countdown na chalaye. Value badalni ho to sirf yahi constant badlo.
 
 ### `watchRoom(io, user, socketId, data = {})` — exported
-User ko room ka watcher banata hai (`$addToSet: watchers`), cache invalidate, aur match ka current state (`turn`, players+index, roomId) `watchRoom` emit karta hai.
+User ko room ka watcher banata hai (`$addToSet: watchers`), cache invalidate, aur match ka current state (`turn`, players+index, roomId) `watchRoom` emit karta hai. `timer` = chal rahe turn ke bache hue second (`getAutoPackRemainingMs`, `resyncMatch` jaisa hi) — pehle hamesha `10` tha; auto-pack job na ho to `0`.
 
 ---
 
 ## Join / common emits
 
 ### `joinRoomNew(io, user, socketId, data = {})` — exported
-Player ko room ke di gayi seat (`index`) par join karata hai (atomic — seat already occupied ya player already joined ho to fail). Join success emit (players + watchers), cache invalidate. `minPlayer` pura ho aur wait na ho to `startMatch` call karta hai.
+Player ko room ke di gayi seat (`index`) par join karata hai (atomic — seat already occupied ya player already joined ho to fail). Join success emit (players + watchers), cache invalidate, phir `broadcastLobbyUpdate` (sab clients ko `updateLobbyList`). `minPlayer` pura ho aur wait na ho to `startMatch` call karta hai.
+
+### `broadcastLobbyUpdate(io, matchData)` — exported
+Sab connected clients ko (global `io.emit`, cluster-wide) `updateLobbyList` emit karta hai, data me sirf `{ gameType }` — lobby wale client us tab ki list dubara `fetchLobbyList` se maang lete hain. `vMode` room ho to `gameType: "variation"` jaata hai (lobby ka variation tab `vMode` se filter hota hai), warna match ka apna `gameType`.
 
 ### `sendCommonEmit(io, matchData, emit)` — exported
 Sab players ko diya gaya event emit karta hai — har player ke saath uska seat `index` aur `selfId` inject karke.

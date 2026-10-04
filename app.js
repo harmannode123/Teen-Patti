@@ -130,6 +130,12 @@ mongoose.connect(mongoUrl)
             };
             app.use('/public', express.static('public', {
                 setHeaders: (res, filePath) => {
+                    // index.html hamesha revalidate ho (ETag se sasta hai) — isi me
+                    // BUILD_VER cache-buster hai; ye cache ho gaya to naya build kabhi
+                    // nahi dikhega chahe .unityweb ka ?v= badal bhi do.
+                    if (filePath.endsWith('.html')) {
+                        res.setHeader('Cache-Control', 'no-cache');
+                    }
                     if (filePath.endsWith('.unityweb')) {
                         const enc = unitywebEncoding(filePath);
                         const accepts = (res.req.headers['accept-encoding'] || '');
