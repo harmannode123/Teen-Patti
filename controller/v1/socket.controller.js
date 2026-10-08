@@ -49,6 +49,11 @@ module.exports.socketController = (io) => {
         // Reconnect ke baad client current match state maangta hai (board resync).
         socket.on(socketEmit.resyncMatch, async (data) => gameplayController.resyncMatch(io, user, socketId, data));
 
+        // Heartbeat: frontend har second "handshake" bhejta hai, hum wahi payload + serverTime usi socket pe wapas karte hain.
+        // Client ko kuch sec tak reply na mile to "network disconnected" dikhata hai. `socket.emit` jaan-bujh ke, `emitToUser` nahi:
+        // 1/sec traffic Redis adapter se cluster me ghumana bekaar hai, aur check bhi ISI connection ka karna hai.
+        socket.on(socketEmit.handshake, (data) => socket.emit(socketEmit.handshake, { ...(data || {}), userId: user?._id, serverTime: Date.now() }));
+
 
         // Disconnection
         socket.on(socketEmit.disconnect, async (data) => gameplayController.selfExit(io, user, socketId, true,data));

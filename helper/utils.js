@@ -152,6 +152,8 @@ const evaluateHand = (cards) => {
     const isSequence =
         (values[0] - 1 === values[1] && values[1] - 1 === values[2]) ||
         (values.toString() === "14,3,2") // A-3-2
+    // A-2-3 ka high 13.5: A-K-Q (14) se neeche, K-Q-J (13) se upar. Pehle 14 tha to A-K-Q se draw ho jaata tha.
+    const seqHigh = values.toString() === "14,3,2" ? 13.5 : values[0]
 
     const counts = {}
     values.forEach(v => counts[v] = (counts[v] || 0) + 1)
@@ -172,7 +174,7 @@ const evaluateHand = (cards) => {
         return {
             rank: RANKS.PURE_SEQUENCE,
             name: "Pure Sequence",
-            high: values[0]
+            high: seqHigh
         }
     }
 
@@ -181,7 +183,7 @@ const evaluateHand = (cards) => {
         return {
             rank: RANKS.SEQUENCE,
             name: "Sequence",
-            high: values[0]
+            high: seqHigh
         }
     }
 
@@ -341,9 +343,24 @@ const evaluateBestHandWithJoker = (dealtCards, jokerValue, finalHandSize = 3) =>
     // No joker in this player's hand -> evaluate it like a normal hand
     if (jokerCount === 0) return evaluateBestHand(dealtCards, finalHandSize)
 
-    // Replacement cards must be real, distinct cards not already in the hand
+    // 2 wild + fixed X -> hamesha Trail of X, 3 wild -> Trail of Aces. Deck scan ki zaroorat nahi
+    // (3 wild pe 22100 combos ~500ms event loop block karta tha). Apne cards usedCards me pehle.
+    if (dealtCards.length === 3 && finalHandSize === 3 && fixedCards.length <= 1) {
+        const trailValue = fixedCards.length === 1 ? fixedCards[0].cardValue : 14
+        const own = dealtCards.filter(card => card?.cardValue === trailValue)
+        const ownIds = new Set(own.map(card => card?.cardId))
+        const fill = FULL_DECK.filter(card => card?.cardValue === trailValue && !ownIds.has(card?.cardId))
+        return evaluateBestHand([...own, ...fill].slice(0, 3), finalHandSize)
+    }
+
+    // Player ke apne wild cards bhi replacement option hain (pehle exclude the -> 7♥8♥9♥ me joker 8
+    // pe Pure gir ke Sequence ban jaata tha). Unhe list me sabse aage rakha taaki tie me asli cards hi dikhein.
+    const wildCards = dealtCards.filter(card => jokerValueSet.has(card?.cardValue))
     const dealtCardIds = new Set(dealtCards.map(card => card?.cardId))
-    const remainingDeck = FULL_DECK.filter(card => !dealtCardIds.has(card?.cardId))
+    const remainingDeck = [
+        ...wildCards,
+        ...FULL_DECK.filter(card => !dealtCardIds.has(card?.cardId))
+    ]
 
     let bestHand = null
     let bestHandCards = null

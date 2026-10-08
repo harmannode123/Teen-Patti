@@ -60,6 +60,9 @@ module.exports.socketEmit = {
     resyncMatch: "resyncMatch",
     resyncMatchSuccess: "resyncMatchSuccess",
 
+    // Heartbeat: frontend har second "handshake" bhejta hai -> server usi naam se usi socket pe wapas karta hai (socket.controller).
+    handshake: "handshake",
+
     // ZHANDU: jab koi joker (J1/J2/J3) khulta hai to sab players/watchers ko emit.
     jokerOpened: "jokerOpened",
 

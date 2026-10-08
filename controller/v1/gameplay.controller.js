@@ -210,8 +210,8 @@ module.exports.startMatch = async (io, matchData) => {
         this.sendCommonEmit(io, startMatch, socketEmit.matchStart)
         this.sendCommonEmitForWatcher(io, startMatch, socketEmit.matchStart)
 
-        // 5s baad cards emit (uske 20s baad pehla betTurn) — dono BullMQ flow jobs.
-        await scheduleFlow("dealCards", { matchId: String(startMatch?._id) }, 5000)
+        // 3s baad cards emit (uske 20s baad pehla betTurn) — dono BullMQ flow jobs.
+        await scheduleFlow("dealCards", { matchId: String(startMatch?._id) }, 3000)
 
 
     } catch (error) {
@@ -1914,12 +1914,16 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
         const exitIds = (matchData?.exitPlayers ?? []).map(x => String(x))
         const players= (matchData.players ?? []).filter(x => !exitIds.includes(String(x?._id)))
 
+        // Auto-pack job ka bacha hua time. null = job hai hi nahi (turn abhi set hai par betTurn
+        // fire nahi hua — deal/pehle-turn ka delay chal raha hai, ya round khatam ho chuka).
+        const autoPackRemainingMs = await getAutoPackRemainingMs(matchData?._id)
+
         const payload = {
             _id: matchData?._id,
             turn: matchData?.turn,
             players: players,
             start:matchData?.cardDistributed,
-            timer: Math.floor((await getAutoPackRemainingMs(matchData?._id) ?? 0) / 1000),
+            timer: Math.floor((autoPackRemainingMs ?? 0) / 1000),
             roomId: matchData?.roomId,
             previousWinnerSeatIndex : previousWinnerIndex(matchData, matchData?.previousWinner),
             gameType:matchData?.gameType,
@@ -1929,6 +1933,7 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
             cards: matchData?.playersData?.find(x => String(x?.playerId) === String(user?._id) && x?.isSeen)?.cards || [],
             index: checkIndex(matchData, matchData?.turn),
             pot: matchData?.pot,
+            matchStart: matchData?.start,
         }
 
 
@@ -1938,7 +1943,12 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
 
        io.to(socketId).emit(socketEmit.resyncMatchSuccess, { message: "Fetch Room List success", ...payload });
 
-      if(String(matchData?.turn)==String(user?._id)) await sendBetTurnEmit(io,user?._id,matchData,true,payload?.timer)
+      // betTurn dobara tabhi bhejo jab is user ki turn ho AUR auto-pack timer chal raha ho (job maujood, time bacha).
+      // Sirf `turn` match karna kaafi nahi tha: deal ke baad turn set hota hai par asli betTurn
+      // betTurnDelay ke baad aata hai — beech me resync pe timer:0 wala jhootha betTurn chala jaata tha
+      // aur client turn UI pehle hi khol deta tha.
+      const autoPackArmed = autoPackRemainingMs != null && autoPackRemainingMs > 0
+      if(String(matchData?.turn)==String(user?._id) && autoPackArmed) await sendBetTurnEmit(io,user?._id,matchData,true,payload?.timer)
 
     } catch (error) {
         return io.to(socketId).emit(socketEmit.errorLog, { status: 400, message: error.message });

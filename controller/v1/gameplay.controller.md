@@ -208,6 +208,8 @@ Reconnect ke baad client current match state maang sakta hai (`resyncMatch` even
 
 **`timer`:** jiski chaal hai uske turn me jitne second bache hain (`getAutoPackRemainingMs` — auto-pack job se, wahi authority hai). Pehle hamesha `10` jaata tha. Auto-pack job na ho (do turn ke beech ka ~2s gap, side show pending, round khatam) to `0`.
 
+**`betTurn` dobara (2026-10-06):** resync ke baad `sendBetTurnEmit(..., seenCard=true, timer)` tabhi chalta hai jab `turn` is user ki ho **aur** auto-pack job maujood ho (`remainingMs > 0`). Pehle sirf `turn` check tha — deal ke baad `turn` set hota hai par asli betTurn `betTurnDelay` ke baad aata hai, beech me resync pe `timer:0` wala jhootha betTurn chala jaata tha aur client turn UI pehle khol deta tha.
+
 ### `selfExit(io, user, socketId, disconnect = false)` — exported
 Self exit / disconnect: user ka `socketId` null karta hai aur `disconnect` par current time stamp karta hai. `socketId` filter jaan bujh ke hai — purane socket ka late disconnect naye connection ko na maare. Live match me ho to `exitPlayers` me daalta hai, na-shuru hue match se seat/player nikal deta hai. Aakhir me 5 min ka `closeSession` BullMQ job schedule karta hai.
 
