@@ -37,7 +37,7 @@ Unity client  ──socket──►  socket.controller  ──►  gameplay.cont
 | `controller/v1/user.controller.js` | Sirf `launch()` (aggregator entry). |
 | `controller/v1/admin.controller.js` | Sirf `login()`. |
 | `helper/utils.js` | JWT/bcrypt + **hand evaluation ka poora engine** + turn manager + side pots. |
-| `helper/appConstant.js` | Socket event names, messages, `gameConfig`, `gameTypeConfig`, `roomList`, `variationList`. |
+| `helper/appConstant.js` | Socket event names, messages, `gameConfig`, `gameTypeConfig`, `roomList`. |
 | `helper/redis.helper.js` | Ek singleton Redis connection. |
 | `helper/lock.helper.js` | Per-match distributed lock (SET NX PX + Lua release). |
 | `helper/matchState.helper.js` | Match ka Redis cache (get/set/update/delete). |
@@ -61,7 +61,7 @@ Unity client  ──socket──►  socket.controller  ──►  gameplay.cont
 Boot pe `mongoose.helper.js → createDefaultAdmin()` rooms seed karta hai (naam bhram-jaisa hai, admin nahi banata):
 
 ```
-roomList (4)         ×   variationList (5)        =   20 match docs, roomId 1..20
+roomList (4 games)   ×   level[] (5 per game)      =   20 match docs, roomId "1".."20" (missing ones re-created on boot)
 teenpatti, zhandu,       Bronze   1,000
 flipper, variation       Silver   5,000
                          Gold     10,000
@@ -124,7 +124,7 @@ waitForNextRount — true = abhi start mat karo, agla round schedule hai
 | `resyncMatch` | `resyncMatch` |
 | `disconnect` | `selfExit` |
 
-**Server → Client** (jo actually use hote hain): `joinRoomSuccess`, `matchStart`, `cardDistributeSuccess`, `betTurn`, `successPlaceBet`, `seenCardSuccess`, `sideShowRequest`, `sideShowWinner`, `rejectSideShow`, `roundWinner`, `jokerOpened`, `watchRoom`, `fetchLobbyList`, `gameList`, `resyncMatchSuccess`, `errorLog`.
+**Server → Client** (jo actually use hote hain): `joinRoomSuccess`, `matchStart`, `cardDistributeSuccess`, `betTurn`, `successPlaceBet`, `seenCardSuccess`, `sideShowRequest`, `sideShowWinner`, `rejectSideShow`, `roundWinner`, `jokerOpened`, `watchRoom`, `fetchLobbyList`, `gameList`, `updateLobbyList` (global broadcast on join, `{ gameType }`), `resyncMatchSuccess`, `errorLog`.
 
 `appConstant.socketEmit` mein bahut saare purane event names (`dashCall`, `trick`, `estimation`, `bidCall`…) pichle "Estimation Kingdom" project se bache hue hain — unhe ignore karo.
 
@@ -204,6 +204,7 @@ Har delay jo match ko aage badhata hai = BullMQ delayed job. Worker `job.name` s
 | `firstJoker` | `_flowFirstJoker` | zhandu J1 reveal |
 | `betTurn` | `_flowBetTurn` | betTurn emit + 30s autopack |
 | `autopack` | `placeBet(..., {isPacked:true})` | 30s turn expiry |
+| `sideShowTimeout` | `_flowSideShowTimeout` | side show ka jawab nahi aaya → reject + requester ki chaal |
 | `startNext` | `_flowStartNext` | agla round |
 
 **Kyun:** in-process timer PM2 reload pe mar jaata tha → match freeze. Ab job Redis mein hai, koi bhi process uthaa leta hai.
@@ -244,7 +245,9 @@ Har delay jo match ko aage badhata hai = BullMQ delayed job. Worker `job.name` s
 | `startMatch` | sab players se `bootAmount` MINUS, pot = total boot |
 | `placeBetCore` | bet lagane wale se `betPut` MINUS, pot += `betPut` |
 | **Fold** | kuch nahi — **pot bhi nahi badhta** (`$inc: pot: isPacked ? 0 : updatePot`) |
-| Round end | `creditWinnerPot` (pura pot) ya `splitPotEqually` (draw / side pots) |
+| Round end | `creditWinnerPot` (pura pot) ya `splitPotEqually` (draw / side pots) — dono **5% commission kaat ke** (`takeCommission`), `recordPayout` se match ke `commission` me `$inc` + `payouts[]` me per-winner `{ playerId, amount, commission, potNo }` `$push` (ek hi updateOne). `startNextRound` ke tail me isi `payouts[]` se `houseLedger` entry banti hai |
+
+**Commission:** winner ko pot ka 95% milta hai, 5% (`COMMISSION_PERCENT`, floor) `match.commission` me. Yani round ab players ke liye net-zero NAHI hai — **pot = winners ko mila + commission**.
 
 **Invariant: pot = jitne coins actually kate.** Ye pehle toota hua tha (fold pe pot badhta tha = phantom coins) — ZHANDU_PLAN mein fix documented hai. Naya code likhte waqt ye invariant sambhalo.
 
@@ -282,7 +285,7 @@ compareResult(p1, p2, ctx)     → {winner|"DRAW", player1:{bestCards,hand}, pla
 - `turnManager(playersData, current)` → agla bettor. `isPacked` **aur** `isAllIn` dono skip. 1 ya 0 bache to `null`.
 - `sideShowTurnManager(playersData, current)` → **pichla** active player (side show ka target).
 
-**Side pots:** `buildSidePots(playersData, bootAmount)` — har player ka contribution = boot + totalBet. Sabse chhote level se layer-by-layer pot bante hain. **Folded players ka paisa pots mein jaata hai (dead money) par wo eligible nahi.** `pickPotWinners(entries, gameType)` har pot ka winner nikaalta hai (tie = multiple winners).
+**Side pots:** `buildSidePots(playersData)` — har player ka contribution = uska `totalBet` (isme boot pehle se shamil hai — `startMatch` `totalBet: bootAmount` se seed karta hai; pehle yahan boot dobara judta tha = pot inflate). Sabse chhote level se layer-by-layer pot bante hain. **Folded players ka paisa pots mein jaata hai (dead money) par wo eligible nahi.** `pickPotWinners(entries, gameType)` har pot ka winner nikaalta hai (tie = multiple winners).
 
 ---
 
