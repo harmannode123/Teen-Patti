@@ -19,10 +19,10 @@ Deck ka shuffled copy return karta hai (Fisher–Yates). Original array mutate n
 Match ke players ko unke seat-index (`checkIndex`) ke hisaab se ascending order me sort karke return karta hai. Invalid index (< 0) wale players filter ho jaate hain.
 
 ### `pickWinnerRank(winnersCards, winnerId)`
-`roundWinner` payload ka top-level `winnerRank` nikaalta hai — main winner ke hand ka naam (`"Trail"`, `"Pure Sequence"`, `"Sequence"`, `"Color"`, `"Pair"`, `"High Card"`). Draw (zhandu split) me `winnerId` null hota hai, par dono hand barabar hote hain → pehle winner ka rank hi return hota hai. Har `roundWinner` emit (showdown, fold-win, final show — players + watchers) me `winnerRank` jaata hai.
+`roundWinner` payload ka top-level `winnerRank` nikaalta hai — main winner ke hand ka detail label (`"Trail of Q"`, `"Pure Sequence Q-K-A"`, `"Sequence 7-8-9"`, `"Color K high"`, `"Pair of K"`, `"High Card A"`; `getHandRankLabel` — `utils.js`). Draw (zhandu split) me `winnerId` null hota hai, par dono hand barabar hote hain → pehle winner ka rank hi return hota hai. Har `roundWinner` emit (showdown, fold-win, final show — players + watchers) me `winnerRank` jaata hai.
 
 ### `buildWinnersCards(matchData, winnerIds = [])`
-Har entry me `rank` bhi hota hai (hand ka naam, `getHandRankName` se — `utils.js`). Jokers per-player lagte hain (`getApplicableJokerValues`), to zhandu all-in wale ka rank unhi freeze hue jokers se banta hai jinse wo jeeta.
+Har entry me `rank` bhi hota hai (hand ka detail label jaise `"Trail of Q"`, `getHandRankLabel` se — `utils.js`). Jokers per-player lagte hain (`getApplicableJokerValues`), to zhandu all-in wale ka rank unhi freeze hue jokers se banta hai jinse wo jeeta.
 
 Diye gaye winner ids ke liye `[{ playerId, index, name, cards, rank }]` banata hai (ids dedupe hote hain — multi-pot me ek hi player kai pot jeet sakta hai). Isse **teeno round-end paths** ka `roundWinner` payload ek jaisa rehta hai: har emit me ab `winnerCards` (main winner ke cards, draw pe `null`) aur `winnersCards` (sab winners ka detail) jaata hai. Pehle winner ke cards har branch me alag shape me aate the — showdown me `reveal` map, fold-win me `player1`, show me `player1`/`player2` — to client ko teen jagah dekhni padti thi.
 

@@ -9,7 +9,7 @@ const { saveHouseLedger } = require("../../helper/houseLedger.helper");
 const economySchema = require("../../model/economy.mode.")
 const gameSessionSchema = require("../../model/gameSession.model");
 const cardDeck = require("../../helper/card.json");
-const { turnManager, sideShowTurnManager, compareResult, parseMongoObjectId, checkIndex, getOpenedJokerValues, getApplicableJokerValues, getHandRankName, buildSidePots, pickPotWinners, evaluateBestHandWithJoker, previousWinnerIndex, buildFlipperJokers, replaceVariableJokers ,isUserExitInMatch} = require("../../helper/utils");
+const { turnManager, sideShowTurnManager, compareResult, parseMongoObjectId, checkIndex, getOpenedJokerValues, getApplicableJokerValues, getHandRankLabel, buildSidePots, pickPotWinners, evaluateBestHandWithJoker, previousWinnerIndex, buildFlipperJokers, replaceVariableJokers ,isUserExitInMatch} = require("../../helper/utils");
 const { acquireLock, releaseLock } = require("../../helper/lock.helper");
 const { emitToUser ,filterOnlineUsers} = require("../../helper/emit.helper");
 const { scheduleAutoPack, cancelAutoPack, scheduleFlow, getAutoPackRemainingMs } = require("../../helper/turnTimer.helper");
@@ -380,7 +380,8 @@ const buildWinnersCards = (matchData, winnerIds = []) => {
             index: checkIndex(matchData, id),
             name: info?.name,
             cards: pd?.cards || [],
-            rank: getHandRankName(pd?.cards, {
+            // rank ab detail string hai ("Trail of Q", "Pair of K") — getHandRankLabel, utils.js.
+            rank: getHandRankLabel(pd?.cards, {
                 gameType: matchData?.gameType,
                 jokerValue: matchData?.jokerCard?.cardValue,
                 jokerValues: getApplicableJokerValues(matchData, pd)
@@ -438,14 +439,14 @@ const resolveShowdown = async (io, matchData) => {
     // matchData.players.forEach(player => {
     //     emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
     // })
-    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnerRank, rank:winnerRank,winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
+    this.sendCommonEmitForWatcher(io, matchData, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnerRank, rank: winnerRank,winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC })
 
     await cancelAutoPack(matchData?._id)
     matchData = await matchSchema.model.findOneAndUpdate({ _id: matchData?._id, end: false }, { end: true, winner: mainWinner, pots: potResults }, { new: true }).populate('players', 'name socketId coins').lean()
 
     matchData.players.forEach(player => {
         if(isUserExitInMatch(matchData, player?._id)) return;
-        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnerRank, rank:winnerRank, winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
+        emitToUser(io, player?._id, socketEmit.roundWinner, { _id: matchData?._id, winnerId: mainWinner, winnerCards, winnerRank, rank: winnerRank, winnersCards, pots: potResults, reveal, isShowdown: true, previousWinnerSeatIndex, nextRoundIn: NEXT_ROUND_SEC ,selfCoin: player?.coins});
     })
     await deleteMatch(matchData?._id)
     this.startNextRound(io, matchData)
@@ -1913,6 +1914,7 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
         // warna seedha crash aur client ko errorLog.
         const exitIds = (matchData?.exitPlayers ?? []).map(x => String(x))
         const players= (matchData.players ?? []).filter(x => !exitIds.includes(String(x?._id)))
+        const watchers=(matchData?.watchers ?? []).map(x => String(x))
 
         // Auto-pack job ka bacha hua time. null = job hai hi nahi (turn abhi set hai par betTurn
         // fire nahi hua — deal/pehle-turn ka delay chal raha hai, ya round khatam ho chuka).
@@ -1929,16 +1931,17 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
             gameType:matchData?.gameType,
             jokerCards: (matchData?.jokerCards ?? []).filter(x => x?.opened).map(x => x.card),
             selfCoin: userdata?.coins,
-            sessionClosed:userdata?.sessionClosed,
+            sessionClosed: userdata?.sessionClosed || exitIds.includes(String(user?._id)),
             cards: matchData?.playersData?.find(x => String(x?.playerId) === String(user?._id) && x?.isSeen)?.cards || [],
             index: checkIndex(matchData, matchData?.turn),
             pot: matchData?.pot,
             matchStart: matchData?.start,
+            isWatcher: watchers &&  watchers?.includes(String(user?._id))?true:false
         }
 
 
 
-      console.log(":::::::::::::::resyncmatch:::::::::::::::::::::::",userdata?.name)
+      console.log(":::::::::::::::resyncmatch:::::::::::::::::::::::",userdata?.name,payload)
 
 
        io.to(socketId).emit(socketEmit.resyncMatchSuccess, { message: "Fetch Room List success", ...payload });
@@ -2190,7 +2193,7 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
         if (!roomId) return;
 
         const [matchData,userdata] = await Promise.all([
-            matchSchema.model.findOneAndUpdate({ roomId }, { $addToSet: { watchers: user?._id } }).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean(),
+            matchSchema.model.findOneAndUpdate({ roomId }, { $addToSet: { watchers: user?._id } },{new:true}).sort({ createdAt: -1 }).populate('players', 'name socketId coins').lean(),
             userSchema.model.findOne({ _id: user?._id }).lean()
         ]);
 
@@ -2209,6 +2212,7 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
         // warna seedha crash aur client ko errorLog.
         const exitIds = (matchData?.exitPlayers ?? []).map(x => String(x))
         const players= (matchData.players ?? []).filter(x => !exitIds.includes(String(x?._id)))
+        const watchers= (matchData?.watchers ?? []).map(x => String(x))
         
         const payload = {
             _id: matchData?._id,
@@ -2225,6 +2229,8 @@ module.exports.watchRoom = async (io, user, socketId, data = {}) => {
             sessionClosed: false,
             index: checkIndex(matchData, matchData?.turn),
             pot: matchData?.pot,
+            matchStart: matchData?.start,
+            isWatcher: watchers?.length &&  watchers?.includes(String(user?._id))?true:false
         }
 
         console.log(":::::::::::::::::::>>.watchy room ::::::::::",payload?.jokerCards)
@@ -2378,7 +2384,7 @@ module.exports.sendCommonEmitForWatcher = (io, matchData, emit, data = {}) => {
         });
 
         const payload = {
-            _id: matchData?._id, players, roomId: matchData?.roomId, start, end,gameType,
+            _id: matchData?._id, players, roomId: matchData?.roomId, start, end,gameType,isWatcher:true
         }
 
 

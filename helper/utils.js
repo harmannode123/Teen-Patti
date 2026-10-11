@@ -411,6 +411,31 @@ module.exports.getHandRankName = (dealtCards, matchContext = {}) => {
     return resolvePlayerHand(dealtCards, matchContext)?.name || null
 }
 
+// cardValue -> dikhne wala letter (14=A, 13=K, 12=Q, 11=J, baaki number).
+const cardLetter = (v) => ({ 14: "A", 13: "K", 12: "Q", 11: "J" }[v] ?? String(v))
+
+// roundWinner ka `rank` / `winnerRank` ab detail string hai: "Trail of Q", "Pair of K",
+// "Sequence 7-8-9", "Color K high", "High Card A" (sirf naam nahi).
+// Wahi resolvePlayerHand -> joker/zhandu/flipper ka wild laga hua hand hi label me aayega.
+module.exports.getHandRankLabel = (dealtCards, matchContext = {}) => {
+    if (!dealtCards?.length) return null
+    const h = resolvePlayerHand(dealtCards, matchContext)
+    if (!h) return null
+    switch (h.name) {
+        case "Trail": return `Trail of ${cardLetter(h.high)}`
+        case "Pure Sequence":
+        case "Sequence": {
+            // A-2-3 ka high 13.5 hota hai (evaluateHand dekho) -> seedha likh do.
+            const seq = h.high === 13.5 ? "A-2-3" : `${cardLetter(h.high - 2)}-${cardLetter(h.high - 1)}-${cardLetter(h.high)}`
+            return `${h.name} ${seq}`
+        }
+        case "Color": return `Color ${cardLetter(Array.isArray(h.high) ? h.high[0] : h.high)} high`
+        case "Pair": return `Pair of ${cardLetter(h.pairValue)}`
+        case "High Card": return `High Card ${cardLetter(Array.isArray(h.high) ? h.high[0] : h.high)}`
+        default: return h.name
+    }
+}
+
 // Compare two evaluated hands honoring the variant's ranking direction.
 // Muflis reverses the ranking (weakest normal hand wins), so we flip the normal
 // comparison. Returns > 0 if handA wins, < 0 if handB wins, 0 = draw.

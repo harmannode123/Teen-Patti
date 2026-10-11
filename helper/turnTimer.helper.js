@@ -26,7 +26,7 @@ const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 connection.on("error", (err) => { console.log("bullmq redis error =>", err.message); reportRedisError(err); });
 
 const QUEUE_NAME = "turn-timer";
-const TURN_MS = 30000; // 30s turn (client timer ke barabar)
+const TURN_MS = 29000; // 30s turn (client timer ke barabar)
 
 // matchId -> current BullMQ jobId (cancel/replace ke liye track karna zaroori hai,
 // kyunki hum fixed jobId nahi use karte — warna active job ke saath collision hota).
