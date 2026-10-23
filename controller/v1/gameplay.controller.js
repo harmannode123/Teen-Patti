@@ -1931,7 +1931,7 @@ module.exports.resyncMatch = async (io, user, socketId, data = {}) => {
             gameType:matchData?.gameType,
             jokerCards: (matchData?.jokerCards ?? []).filter(x => x?.opened).map(x => x.card),
             selfCoin: userdata?.coins,
-            sessionClosed: userdata?.sessionClosed || exitIds.includes(String(user?._id)),
+            sessionClosed: userdata?.sessionClosed,
             cards: matchData?.playersData?.find(x => String(x?.playerId) === String(user?._id) && x?.isSeen)?.cards || [],
             index: checkIndex(matchData, matchData?.turn),
             pot: matchData?.pot,
